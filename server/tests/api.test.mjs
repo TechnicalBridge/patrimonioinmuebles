@@ -107,3 +107,27 @@ test('los eventos de pago: firma, antirrepeticion y deduplicacion', async () => 
   assert.ok(!morosos.some(m => m.codigo === 'CTR-2026-031'), 'el contrato pagado por evento sale de la cartera');
   assert.equal(morosos.length, 2);
 });
+
+test('dos propiedades con el mismo titulo no revientan: la segunda recibe otro slug', async () => {
+  const casa = { titulo: 'Depto en Ñuñoa', tipo: 'departamento', operacion: 'arriendo', precio: 520000 };
+  const primera = await post('/admin/properties', casa);
+  const segunda = await post('/admin/properties', casa);
+  assert.equal(primera.status, 201);
+  assert.equal(segunda.status, 201);
+  assert.equal(primera.body.slug, 'depto-en-nunoa');
+  assert.equal(segunda.body.slug, 'depto-en-nunoa-2');
+  const aMano = await post('/admin/properties', { ...casa, slug: 'depto-en-nunoa' });
+  assert.equal(aMano.status, 409, 'un slug escrito a mano que ya existe es un conflicto, no un 500');
+});
+
+test('ningun error sale con el stack del servidor', async () => {
+  // Una propiedad arrendada: la de un contrato vigente.
+  const conContrato = (await j('/admin/arriendos/contratos')).body[0];
+  const propiedades = (await j('/properties?all=1')).body;
+  const propiedad = propiedades.find((p) => p.direccion === conContrato.direccion);
+  assert.ok(propiedad, 'la propiedad del contrato existe');
+  const borrar = await j(`/admin/properties/${propiedad.id}`, { method: 'DELETE' });
+  assert.equal(borrar.status, 409, 'una propiedad con contrato no se borra');
+  assert.ok(!JSON.stringify(borrar.body).includes(' at '), 'sin stack');
+  assert.match(borrar.body.error, /otro registro depende/);
+});

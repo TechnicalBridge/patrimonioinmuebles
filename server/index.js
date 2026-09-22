@@ -217,14 +217,22 @@ app.post('/api/admin/properties', requireAdmin, (req, res) => {
   if (!p.titulo || !p.tipo || !p.operacion || p.precio == null) {
     return res.status(400).json({ error: 'Faltan datos de la propiedad' });
   }
-  const slug =
-    p.slug ||
-    String(p.titulo)
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/(^-|-$)/g, '');
+  // Un slug escrito a mano que ya existe es un error de quien lo escribio. Uno
+  // derivado del titulo no: dos departamentos pueden llamarse igual, y el
+  // segundo pasa a ser depto-nunoa-2 en vez de reventar.
+  if (p.slug && get('SELECT 1 FROM properties WHERE slug = ?', [p.slug])) {
+    return res.status(409).json({ error: `Ya existe una propiedad con el slug "${p.slug}"` });
+  }
+  const base = String(p.titulo)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '');
+  let slug = p.slug || base;
+  for (let n = 2; !p.slug && get('SELECT 1 FROM properties WHERE slug = ?', [slug]); n++) {
+    slug = `${base}-${n}`;
+  }
 
   const moneda = p.moneda || (p.operacion === 'arriendo' ? 'CLP' : 'UF');
   if (!['UF', 'CLP'].includes(moneda)) {
@@ -373,6 +381,24 @@ if (fs.existsSync(clientDist)) {
     res.sendFile(path.join(clientDist, 'index.html'));
   });
 }
+
+// El ultimo recurso. Ninguna respuesta lleva el stack: al navegador le basta un
+// mensaje, y el detalle queda en el log. Lo que la base rechaza por sus reglas
+// (un unico repetido, algo en uso por otro registro, un dato fuera de rango) es
+// un conflicto del pedido, no una caida del servidor.
+const RESTRICCIONES = [
+  [/UNIQUE constraint/i, 'Ya existe un registro con ese valor'],
+  [/FOREIGN KEY constraint/i, 'No se puede: otro registro depende de este'],
+  [/CHECK constraint/i, 'Uno de los datos no cumple las reglas'],
+];
+app.use((err, _req, res, _next) => {
+  const regla = RESTRICCIONES.find(([patron]) => patron.test(err?.message || ''));
+  if (regla) {
+    return res.status(409).json({ error: regla[1] });
+  }
+  console.error(err);
+  res.status(err.status || 500).json({ error: err.status ? err.message : 'Error interno del servidor' });
+});
 
 initDb()
   .then(() => {
