@@ -1,0 +1,6 @@
+node_modules/
+dist/
+server/patrimonio.db
+.DS_Store
+*.log
+.env
