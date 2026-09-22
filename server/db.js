@@ -5,7 +5,9 @@ import { fileURLToPath } from 'url';
 import { seedIfEmpty } from './seed.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DB_PATH = path.join(__dirname, 'patrimonio.db');
+// PATRIMONIO_DB permite otra base: las pruebas usan un archivo temporal para
+// no borrar la de desarrollo cada vez que corren.
+const DB_PATH = process.env.PATRIMONIO_DB || path.join(__dirname, 'patrimonio.db');
 
 let db;
 

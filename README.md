@@ -1,5 +1,7 @@
 # Patrimonio Inmuebles
 
+[![CI](https://github.com/TechnicalBridge/patrimonioinmuebles/actions/workflows/ci.yml/badge.svg)](https://github.com/TechnicalBridge/patrimonioinmuebles/actions/workflows/ci.yml)
+
 Sitio web de una corredora de propiedades chilena: front en React y API con base de datos SQLite.
 
 Proyecto de Capstone. La empresa, las personas y las propiedades son ficticias.
@@ -72,6 +74,11 @@ Un contrato que se puso al día después de haber sido entregado sale en la cart
 EVENTOS_SECRET=una-clave-larga npm run dev
 ```
 
+El secreto lo entrega APOFYX al registrar la URL de Patrimonio
+(`python manage.py suscribir_cliente 76418902-7 http://localhost:3001/api/eventos`).
+Con eso, un pago hecho en el portal de DataBridge termina como abono en el contrato,
+repartido del cargo más antiguo al más nuevo, con medio `databridge`.
+
 No hay secreto por defecto a propósito: uno escrito en el código no es un secreto. Sin configurarlo, Patrimonio funciona igual y los pagos se registran a mano.
 
 > **Ojo con las llaves foráneas.** `db.export()` de sql.js cierra y reabre la base, lo que apaga el PRAGMA `foreign_keys`. Como acá se persiste después de cada escritura, hay que volver a encenderlo pegado al `export`, si no las llaves foráneas quedan decorativas desde el primer INSERT.
@@ -79,3 +86,11 @@ No hay secreto por defecto a propósito: uno escrito en el código no es un secr
 La venta se publica en **UF** y el arriendo residencial en **pesos**; el arriendo comercial se pacta en UF. Por eso cada propiedad guarda su moneda.
 
 El archivo de la base queda en `server/patrimonio.db` la primera vez que arranca el servidor. El esquema se crea con `CREATE TABLE IF NOT EXISTS`, así que **un cambio de columnas no se aplica sobre una base existente**: hay que borrar `server/patrimonio.db` y dejar que el servidor la regenere con los datos de demostración.
+
+## Pruebas
+
+```bash
+npm test
+```
+
+Corren sobre una base temporal (`PATRIMONIO_DB`), así que no tocan `server/patrimonio.db`. Una de ellas comprueba que la cartera que genera el panel es exactamente el ejemplo del contrato de integración; si el repositorio `TB_web` está al lado, compara además que la copia del ejemplo siga al día.
