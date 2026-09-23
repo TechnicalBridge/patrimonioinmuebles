@@ -6,6 +6,12 @@ Sitio web de una corredora de propiedades chilena: front en React y API con base
 
 Proyecto de Capstone. La empresa, las personas y las propiedades son ficticias.
 
+Patrimonio administra arriendos, así que también es **acreedor**: cuando un arrendatario deja de
+pagar, esa deuda entra en una cadena de tres empresas. **Patrimonio** →
+[**APOFYX**](https://github.com/TechnicalBridge/APOFYX), que cobra por cuenta de sus clientes, →
+[**DataBridge**](https://github.com/TechnicalBridge/TB_web), donde el arrendatario paga. El pago
+vuelve firmado por el mismo camino hasta dejar el contrato en $0.
+
 La base guarda **nombre, apellido, teléfono, correo**, interés, presupuesto, mensajes y el inventario de propiedades.
 
 ## Cómo arrancar
