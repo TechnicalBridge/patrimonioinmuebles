@@ -1,0 +1,10 @@
+# =============================================================================
+#  Finales de linea
+# =============================================================================
+#  Este repositorio se trabaja en Windows con core.autocrlf=true: Git guarda LF
+#  y al hacer checkout reescribe cada archivo con CRLF. Hoy no hay scripts de
+#  shell aca, pero el primero que se agregue —un entrypoint de Docker, por
+#  ejemplo— dejaria de arrancar en Linux sin avisar por que. Mejor que la regla
+#  exista antes que el problema.
+# =============================================================================
+*.sh    text eol=lf

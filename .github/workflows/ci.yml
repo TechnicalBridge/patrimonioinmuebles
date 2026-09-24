@@ -38,3 +38,20 @@ jobs:
           cache-dependency-path: client/package-lock.json
       - run: npm ci
       - run: npm run build
+
+  seguridad:
+    name: Dependencias vulnerables
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # Rompe el build si hay algo de severidad alta o critica. Lo moderado lo
+      # revisa Dependabot, que abre un pull request en vez de bloquear a todos.
+      - name: npm audit del servidor
+        working-directory: server
+        run: npm audit --audit-level=high
+      - name: npm audit del cliente
+        working-directory: client
+        run: npm audit --audit-level=high

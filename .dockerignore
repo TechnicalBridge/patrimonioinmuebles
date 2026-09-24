@@ -1,0 +1,16 @@
+# Lo que NO viaja al construir la imagen.
+**/node_modules/
+**/dist/
+
+# La base de desarrollo se queda en la maquina: la del contenedor vive en su
+# volumen y se siembra sola la primera vez.
+server/patrimonio.db
+server/*.db
+
+.git/
+.github/
+.vscode/
+.idea/
+*.log
+.env
+README.md

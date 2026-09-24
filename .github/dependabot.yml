@@ -1,0 +1,33 @@
+# =============================================================================
+#  Dependencias vulnerables — Dependabot
+# =============================================================================
+#  Abre un pull request cuando una dependencia publica una version que corrige
+#  una vulnerabilidad. Son tres package.json: la raiz, el servidor y el
+#  cliente, y cada uno se revisa por separado.
+# =============================================================================
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule: { interval: weekly, day: monday }
+    commit-message: { prefix: "deps" }
+
+  - package-ecosystem: npm
+    directory: /server
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 5
+    commit-message: { prefix: "deps(server)" }
+
+  - package-ecosystem: npm
+    directory: /client
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 5
+    commit-message: { prefix: "deps(client)" }
+
+  #  Las propias acciones de GitHub tambien son codigo de terceros que corre
+  #  con permisos sobre el repositorio.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: monthly }
+    commit-message: { prefix: "deps(ci)" }

@@ -1,0 +1,55 @@
+# =============================================================================
+#  Patrimonio Inmuebles
+# =============================================================================
+#      docker compose up -d --build
+#
+#  y el sitio queda en http://localhost:3001 — el panel, en /admin.
+#
+#  Un solo servicio: la base es un archivo SQLite que vive en un volumen, no
+#  un motor aparte. Es lo que corresponde al tamano de esta empresa, y esta
+#  justificado en el README.
+# =============================================================================
+
+services:
+  sitio:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: patrimonio/sitio:1.0.0
+    container_name: patrimonio-sitio
+    restart: unless-stopped
+
+    environment:
+      PORT: "3001"
+      #  La clave del panel. La de por omision es para la demostracion.
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-patrimonio}
+      #  Recibir avisos de pago desde la cobranza exige firma. Mientras no
+      #  haya secreto, ese endpoint queda apagado a proposito.
+      EVENTOS_SECRET: ${EVENTOS_SECRET:-}
+      #  Entregarle la cartera morosa a una agencia de cobranza. Sin estas
+      #  tres, Patrimonio funciona igual y la cartera se descarga a mano.
+      COBRANZA_URL:         ${COBRANZA_URL:-}
+      COBRANZA_CLAVE:       ${COBRANZA_CLAVE:-}
+      COBRANZA_AGENCIA_RUT: ${COBRANZA_AGENCIA_RUT:-}
+
+    ports:
+      - "${PATRIMONIO_PORT:-3001}:3001"
+
+    volumes:
+      #  Los datos sobreviven a "docker compose down" y a reconstruir la
+      #  imagen. Para partir de cero: docker compose down -v
+      - patrimonio_datos:/datos
+
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:3001/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+    deploy:
+      resources:
+        limits: { memory: 256M }
+
+volumes:
+  patrimonio_datos:
