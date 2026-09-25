@@ -94,8 +94,9 @@ docker compose up -d --build
 | Panel | http://localhost:3001/admin · clave `patrimonio` |
 
 La base se crea sola la primera vez, con propiedades, clientes y contratos de demostración, y
-vive en un volumen: sobrevive a `docker compose down` y a reconstruir la imagen. Para partir de
-cero, `docker compose down -v`.
+vive en un volumen: sobrevive a `docker compose down` y a reconstruir la imagen. Los
+[arriendos de demostración](#los-arriendos-de-demostración) se revisan en cada arranque: si falta
+alguno, se agrega sin tocar lo que ya había. Para partir de cero, `docker compose down -v`.
 
 ### Para programar
 
@@ -187,6 +188,26 @@ sus días de mora, y permite:
 - **Registrar un pago** recibido en la oficina, total o parcial.
 - **Emitir la cartera** a una fecha de corte. Queda en borrador y se puede descargar como
   archivo; recién al marcarla como enviada cuenta como entregada.
+
+### Los arriendos de demostración
+
+Diez contratos, cada uno en una situación distinta. Son los mismos arrendatarios que traen los
+datos de ejemplo de APOFYX y de DataBridge, así que los tres sistemas cuentan la misma historia.
+
+| Contrato | Arrendatario | Situación |
+| --- | --- | --- |
+| CTR-2025-014 | Felipe Rojas Muñoz | Debe agosto y septiembre |
+| CTR-2026-031 | Valentina Soto Pizarro | Debe septiembre |
+| CTR-2024-007 | Comercial Ñandú SpA | Debe julio a septiembre, en UF |
+| CTR-2025-022 | Tomás Fuentes Leiva | Se puso al día en la oficina: en la cartera de septiembre va como retiro |
+| CTR-2026-008 | Josefa Alcaíno Ruiz | Al día |
+| CTR-2025-019 | Rodrigo Pérez Contreras | Debe junio a septiembre |
+| CTR-2026-012 | Carolina Muñoz Vera | Debe agosto y septiembre |
+| CTR-2024-019 | Panadería La Espiga Ltda. | Debe julio a septiembre, en UF |
+| CTR-2025-027 | Ignacio Tapia Rojas | Entregó el departamento el 31 de agosto debiendo junio a agosto. Su contrato terminó, y ya no va en la cartera |
+| CTR-2026-015 | Daniela Cáceres Flores | Debe julio a septiembre |
+
+La cartera de agosto (`PAT-2026-08-18-01`) figura como entregada, con ocho deudas.
 
 ### Recibir los pagos desde la cobranza
 

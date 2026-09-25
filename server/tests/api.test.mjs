@@ -43,21 +43,22 @@ after(() => servidor?.kill());
 
 test('contratos y morosos al corte', async () => {
   const contratos = (await j('/admin/arriendos/contratos')).body;
-  assert.equal(contratos.length, 5);
+  assert.equal(contratos.length, 10);
   assert.equal(contratos.find(c => c.codigo === 'CTR-2025-014').deuda, 1040000);
   const morosos = (await j('/admin/arriendos/morosos?corte=2026-09-18')).body;
-  assert.equal(morosos.length, 3);
+  //  Siete: el contrato terminado de Ignacio no cuenta, solo los vigentes.
+  assert.equal(morosos.length, 7);
   assert.equal(morosos[0].dias_mora, 44);
   assert.equal(morosos[0].cargos.length, 2);
 });
 
 test('emitir los cargos del mes dos veces no cobra dos veces', async () => {
   const primera = (await post('/admin/arriendos/cargos', { periodo: '2026-10' })).body;
-  assert.deepEqual([primera.emitidos, primera.existentes], [5, 0]);
+  assert.deepEqual([primera.emitidos, primera.existentes], [9, 0]);
   const segunda = (await post('/admin/arriendos/cargos', { periodo: '2026-10' })).body;
-  assert.deepEqual([segunda.emitidos, segunda.existentes], [0, 5]);
+  assert.deepEqual([segunda.emitidos, segunda.existentes], [0, 9]);
   assert.equal((await post('/admin/arriendos/cargos', { periodo: '2026-13' })).status, 400);
-  assert.equal((await j('/admin/arriendos/morosos?corte=2026-09-18')).body.length, 3,
+  assert.equal((await j('/admin/arriendos/morosos?corte=2026-09-18')).body.length, 7,
     'un cargo que aun no vence no hace moroso a nadie');
 });
 
@@ -77,7 +78,7 @@ test('un pago en la oficina deja el saldo, no el monto original, en la cartera',
 test('el lote se emite, se descarga y se marca enviado una sola vez', async () => {
   const emitido = (await post('/admin/arriendos/lotes', { corte: '2026-09-18' })).body;
   assert.equal(emitido.lote.estado, 'borrador');
-  assert.equal(emitido.lote.items.length, 4);
+  assert.equal(emitido.lote.items.length, 8);
   assert.equal(emitido.lote.id_externo, 'PAT-2026-09-18-01');
   const archivo = await fetch(`${B}/admin/arriendos/lotes/${emitido.lote.id}/archivo`, { headers: H });
   assert.match(archivo.headers.get('content-disposition') || '', /PAT-2026-09-18-01\.json/);
@@ -105,7 +106,7 @@ test('los eventos de pago: firma, antirrepeticion y deduplicacion', async () => 
 
   const morosos = (await j('/admin/arriendos/morosos?corte=2026-09-18')).body;
   assert.ok(!morosos.some(m => m.codigo === 'CTR-2026-031'), 'el contrato pagado por evento sale de la cartera');
-  assert.equal(morosos.length, 2);
+  assert.equal(morosos.length, 6);
 });
 
 test('dos propiedades con el mismo titulo no revientan: la segunda recibe otro slug', async () => {

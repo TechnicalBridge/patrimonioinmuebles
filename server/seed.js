@@ -263,10 +263,19 @@ const properties = [
 //  arriendo mes a mes por cuenta del propietario. De aqui sale la cartera
 //  morosa que se le entrega a APOFYX.
 //
-//  Los contratos y los montos son los mismos del ejemplo del contrato de
-//  integracion (TB_web/docs/integracion/ejemplos/cartera-v1.patrimonio.json).
-//  Eso no es casualidad: asi el archivo que se publica como ejemplo es
-//  exactamente lo que produce esta base a la fecha de corte 2026-09-18.
+//  Los cinco primeros contratos son los del ejemplo del contrato de
+//  integracion (TB_web/docs/integracion/ejemplos/cartera-v1.patrimonio.json):
+//  sus deudas salen exactamente iguales en la cartera del 2026-09-18. Los
+//  otros cinco son el resto de los clientes de la demo, los mismos que tienen
+//  APOFYX y DataBridge, cada uno en una situacion distinta:
+//
+//    Rodrigo       debe cuatro meses; no ha hecho nada
+//    Carolina      debe dos; en DataBridge pagara todo de una vez
+//    La Espiga     local comercial en UF, debe tres; pagara en cuotas
+//    Ignacio       dejo el departamento en agosto debiendo tres meses: su
+//                  contrato termino, y por eso no vuelve en la cartera de
+//                  septiembre (se entrego en la de agosto)
+//    Daniela       debe tres; pagara un convenio completo
 // =============================================================================
 
 const administradas = [
@@ -305,6 +314,41 @@ const administradas = [
     direccion: 'Depto 802, Av. Bilbao 3120',
     comuna: 'Providencia', ciudad: 'Santiago', region: 'Región Metropolitana', agent_id: 2,
   },
+  {
+    titulo: 'Depto 1507 Santa Isabel', slug: 'admin-depto-1507-santa-isabel',
+    tipo: 'departamento', operacion: 'arriendo', precio: 450000, moneda: 'CLP',
+    dormitorios: 2, banos: 1, estacionamientos: 0, m2_utiles: 58,
+    direccion: 'Depto 1507, Santa Isabel 470',
+    comuna: 'Santiago', ciudad: 'Santiago', region: 'Región Metropolitana', agent_id: 2,
+  },
+  {
+    titulo: 'Depto 42 Pajaritos', slug: 'admin-depto-42-pajaritos',
+    tipo: 'departamento', operacion: 'arriendo', precio: 380000, moneda: 'CLP',
+    dormitorios: 2, banos: 1, estacionamientos: 1, m2_utiles: 52,
+    direccion: 'Depto 42, Av. Pajaritos 2810',
+    comuna: 'Maipú', ciudad: 'Santiago', region: 'Región Metropolitana', agent_id: 2,
+  },
+  {
+    titulo: 'Local 12 Gran Avenida', slug: 'admin-local-12-gran-avenida',
+    tipo: 'local', operacion: 'arriendo', precio: 24, moneda: 'UF',
+    dormitorios: 0, banos: 1, estacionamientos: 0, m2_utiles: 68,
+    direccion: 'Local 12, Gran Avenida José Miguel Carrera 5540',
+    comuna: 'San Miguel', ciudad: 'Santiago', region: 'Región Metropolitana', agent_id: 4,
+  },
+  {
+    titulo: 'Depto 204 Portugal', slug: 'admin-depto-204-portugal',
+    tipo: 'departamento', operacion: 'arriendo', precio: 350000, moneda: 'CLP',
+    dormitorios: 1, banos: 1, estacionamientos: 0, m2_utiles: 38,
+    direccion: 'Depto 204, Portugal 48',
+    comuna: 'Santiago', ciudad: 'Santiago', region: 'Región Metropolitana', agent_id: 2,
+  },
+  {
+    titulo: 'Depto 713 Vicuña Mackenna', slug: 'admin-depto-713-vicuna-mackenna',
+    tipo: 'departamento', operacion: 'arriendo', precio: 300000, moneda: 'CLP',
+    dormitorios: 2, banos: 1, estacionamientos: 0, m2_utiles: 55,
+    direccion: 'Depto 713, Av. Vicuña Mackenna 4860',
+    comuna: 'Macul', ciudad: 'Santiago', region: 'Región Metropolitana', agent_id: 2,
+  },
 ];
 
 const arrendatarios = [
@@ -320,6 +364,17 @@ const arrendatarios = [
     notas: 'Se puso al día pagando en la oficina el 10-09-2026.' },
   { rut: '17654321-3', tipo: 'persona', nombre: 'Josefa Alcaíno Ruiz',
     correo: 'josefa.alcaino@correo.cl', telefono: '+56933221100' },
+  { rut: '14583206-3', tipo: 'persona', nombre: 'Rodrigo Pérez Contreras',
+    correo: 'rodrigo.perez@correo.cl', telefono: '+56961238890' },
+  { rut: '19230418-0', tipo: 'persona', nombre: 'Carolina Muñoz Vera',
+    correo: 'carolina.munoz@correo.cl', telefono: '+56978812034' },
+  { rut: '76284519-9', tipo: 'empresa', nombre: 'Panadería La Espiga Ltda.',
+    correo: 'contacto@laespiga.cl', telefono: '+56229876543' },
+  { rut: '17893456-2', tipo: 'persona', nombre: 'Ignacio Tapia Rojas',
+    correo: 'ignacio.tapia@correo.cl', telefono: '+56987120045',
+    notas: 'Entrego el departamento el 31-08-2026 debiendo junio, julio y agosto.' },
+  { rut: '18642975-3', tipo: 'persona', nombre: 'Daniela Cáceres Flores',
+    correo: 'daniela.caceres@correo.cl', telefono: '+56954410987' },
 ];
 
 // El orden importa: es el orden en que salen las deudas en la cartera.
@@ -376,6 +431,64 @@ const contratos = [
       { periodo: '2026-09', pagado: { fecha: '2026-09-04', medio: 'transferencia' } },
     ],
   },
+  {
+    codigo: 'CTR-2025-019', propiedad: 6, arrendatario: 6,
+    concepto: 'Arriendo mensual', fecha_inicio: '2025-04-05',
+    renta_monto: 450000, moneda: 'CLP',
+    cargos: [
+      { periodo: '2026-05', pagado: { fecha: '2026-05-06', medio: 'transferencia' } },
+      { periodo: '2026-06', pagado: null },
+      { periodo: '2026-07', pagado: null },
+      { periodo: '2026-08', pagado: null },
+      { periodo: '2026-09', pagado: null },
+    ],
+  },
+  {
+    codigo: 'CTR-2026-012', propiedad: 7, arrendatario: 7,
+    concepto: 'Arriendo mensual', fecha_inicio: '2026-02-05',
+    renta_monto: 380000, moneda: 'CLP',
+    cargos: [
+      { periodo: '2026-07', pagado: { fecha: '2026-07-06', medio: 'transferencia' } },
+      { periodo: '2026-08', pagado: null },
+      { periodo: '2026-09', pagado: null },
+    ],
+  },
+  {
+    codigo: 'CTR-2024-019', propiedad: 8, arrendatario: 8,
+    concepto: 'Arriendo local comercial', fecha_inicio: '2024-03-05',
+    renta_monto: 24, moneda: 'UF',
+    cargos: [
+      { periodo: '2026-06', pagado: { fecha: '2026-06-10', medio: 'transferencia' } },
+      { periodo: '2026-07', pagado: null },
+      { periodo: '2026-08', pagado: null },
+      { periodo: '2026-09', pagado: null },
+    ],
+  },
+  {
+    // Termino el 31 de agosto. La cartera de septiembre solo mira contratos
+    // vigentes, asi que su deuda sigue en cobranza con lo que se entrego en
+    // agosto, sin reenviarse.
+    codigo: 'CTR-2025-027', propiedad: 9, arrendatario: 9,
+    concepto: 'Arriendo mensual', fecha_inicio: '2025-09-05', fecha_termino: '2026-08-31', estado: 'terminado',
+    renta_monto: 350000, moneda: 'CLP',
+    cargos: [
+      { periodo: '2026-05', pagado: { fecha: '2026-05-05', medio: 'transferencia' } },
+      { periodo: '2026-06', pagado: null },
+      { periodo: '2026-07', pagado: null },
+      { periodo: '2026-08', pagado: null },
+    ],
+  },
+  {
+    codigo: 'CTR-2026-015', propiedad: 10, arrendatario: 10,
+    concepto: 'Arriendo mensual', fecha_inicio: '2026-01-05',
+    renta_monto: 300000, moneda: 'CLP',
+    cargos: [
+      { periodo: '2026-06', pagado: { fecha: '2026-06-05', medio: 'transferencia' } },
+      { periodo: '2026-07', pagado: null },
+      { periodo: '2026-08', pagado: null },
+      { periodo: '2026-09', pagado: null },
+    ],
+  },
 ];
 
 // La cartera del mes pasado, ya enviada. Existe para que el retiro de
@@ -390,6 +503,11 @@ const loteAnterior = {
     { contrato: 'CTR-2025-014', monto_enviado: 520000, moneda: 'CLP' },
     { contrato: 'CTR-2024-007', monto_enviado: 77, moneda: 'UF' },
     { contrato: 'CTR-2025-022', monto_enviado: 1360000, moneda: 'CLP' },
+    { contrato: 'CTR-2025-019', monto_enviado: 1350000, moneda: 'CLP' },
+    { contrato: 'CTR-2026-012', monto_enviado: 380000, moneda: 'CLP' },
+    { contrato: 'CTR-2024-019', monto_enviado: 48, moneda: 'UF' },
+    { contrato: 'CTR-2025-027', monto_enviado: 1050000, moneda: 'CLP' },
+    { contrato: 'CTR-2026-015', monto_enviado: 600000, moneda: 'CLP' },
   ],
 };
 
@@ -437,9 +555,18 @@ const sampleClients = [
   },
 ];
 
-export function seedIfEmpty({ all, run }) {
+/**
+ * El sitio se siembra solo en una base vacia. Los arriendos, en cambio, se
+ * revisan en cada arranque y se agrega el contrato de la demo que falte: asi
+ * una base que ya existia recibe a los clientes nuevos sin perder nada de lo
+ * que se cargo a mano.
+ */
+export function seedIfEmpty({ all, get, run }) {
   const existing = all('SELECT COUNT(*) AS n FROM properties')[0];
-  if (existing?.n > 0) return;
+  if (existing?.n > 0) {
+    sembrarArriendos({ get, run });
+    return;
+  }
 
   for (const a of agents) {
     run(
@@ -493,17 +620,17 @@ export function seedIfEmpty({ all, run }) {
     );
   }
 
-  sembrarArriendos(run);
+  sembrarArriendos({ get, run });
 }
 
 // -----------------------------------------------------------------------------
 //  Administracion de arriendos
 // -----------------------------------------------------------------------------
-function sembrarArriendos(run) {
+function sembrarArriendos({ get, run }) {
   // Las propiedades en administracion entran como 'arrendada', asi que no
   // aparecen en el sitio publico, que filtra por 'disponible'.
   const propiedadId = administradas.map((p) =>
-    run(
+    get('SELECT id FROM properties WHERE slug = ?', [p.slug])?.id ?? run(
       `INSERT INTO properties (
         titulo, slug, descripcion, tipo, operacion, precio, moneda, dormitorios, banos,
         estacionamientos, m2_utiles, m2_terreno, direccion, comuna, ciudad,
@@ -518,7 +645,7 @@ function sembrarArriendos(run) {
   );
 
   const arrendatarioId = arrendatarios.map((t) =>
-    run(
+    get('SELECT id FROM tenants WHERE rut = ?', [t.rut])?.id ?? run(
       `INSERT INTO tenants (rut, tipo, nombre, correo, telefono, notas)
        VALUES (?, ?, ?, ?, ?, ?)`,
       [t.rut, t.tipo, t.nombre, t.correo, t.telefono ?? null, t.notas ?? null]
@@ -527,14 +654,19 @@ function sembrarArriendos(run) {
 
   const contratoId = {};
   for (const c of contratos) {
+    const existente = get('SELECT id FROM leases WHERE codigo = ?', [c.codigo]);
+    if (existente) {
+      contratoId[c.codigo] = existente.id;
+      continue;
+    }
     const id = run(
       `INSERT INTO leases (
-         codigo, property_id, tenant_id, concepto, fecha_inicio,
+         codigo, property_id, tenant_id, concepto, fecha_inicio, fecha_termino,
          renta_monto, moneda, dia_vencimiento, estado
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, 5, 'vigente')`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 5, ?)`,
       [
         c.codigo, propiedadId[c.propiedad - 1], arrendatarioId[c.arrendatario - 1],
-        c.concepto, c.fecha_inicio, c.renta_monto, c.moneda,
+        c.concepto, c.fecha_inicio, c.fecha_termino ?? null, c.renta_monto, c.moneda, c.estado ?? 'vigente',
       ]
     );
     contratoId[c.codigo] = id;
@@ -556,12 +688,14 @@ function sembrarArriendos(run) {
     }
   }
 
-  const loteId = run(
+  const loteId = get('SELECT id FROM collection_batches WHERE id_externo = ?', [loteAnterior.id_externo])?.id ?? run(
     `INSERT INTO collection_batches (id_externo, fecha_corte, estado, enviado_en)
      VALUES (?, ?, ?, ?)`,
     [loteAnterior.id_externo, loteAnterior.fecha_corte, loteAnterior.estado, loteAnterior.enviado_en]
   );
   for (const item of loteAnterior.items) {
+    if (get('SELECT 1 AS hay FROM collection_batch_items WHERE batch_id = ? AND lease_id = ?',
+      [loteId, contratoId[item.contrato]])) continue;
     run(
       `INSERT INTO collection_batch_items (batch_id, lease_id, accion, monto_enviado, moneda, resultado)
        VALUES (?, ?, 'registrar', ?, ?, 'registrada')`,

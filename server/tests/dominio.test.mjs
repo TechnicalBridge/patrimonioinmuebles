@@ -56,17 +56,26 @@ test('la base rechaza lo que el negocio no permite', () => {
 test('calcula los morosos al corte', () => {
   const morosos = all(`SELECT codigo, deuda, cargos_impagos FROM v_lease_debt
                         WHERE vencimiento_mas_antiguo < ? ORDER BY lease_id`, [CORTE]);
-  assert.equal(morosos.length, 3);
+  //  Los tres del ejemplo del contrato y los cinco clientes nuevos de la demo,
+  //  incluido Ignacio, cuyo contrato termino debiendo.
+  assert.equal(morosos.length, 8);
   assert.deepEqual([morosos[0].deuda, morosos[0].cargos_impagos], [1040000, 2]);
   assert.equal(morosos[2].deuda, 115.5, 'la deuda en UF conserva sus decimales');
   const alDia = all('SELECT codigo FROM leases WHERE id NOT IN (SELECT lease_id FROM v_lease_debt) ORDER BY id').map(r => r.codigo);
   assert.deepEqual(alDia, ['CTR-2025-022', 'CTR-2026-008']);
 });
 
-test('la cartera generada es exactamente el ejemplo del contrato', () => {
+test('las deudas del ejemplo del contrato salen exactamente iguales en la cartera', () => {
   const generada = construirCartera({ fechaCorte: CORTE, idExterno: 'PAT-2026-09-18-01' });
   const ejemplo = JSON.parse(fs.readFileSync(FIXTURE, 'utf8'));
-  assert.deepEqual(sinFecha(generada), sinFecha(ejemplo));
+  //  La base tiene mas clientes que el ejemplo publicado: se comparan las
+  //  deudas del ejemplo, que tienen que salir iguales y en el mismo orden.
+  const delEjemplo = new Set(ejemplo.deudas.map(d => d.id_externo));
+  const soloEjemplo = { ...generada, deudas: generada.deudas.filter(d => delEjemplo.has(d.id_externo)) };
+  assert.deepEqual(sinFecha(soloEjemplo), sinFecha(ejemplo));
+  assert.equal(generada.deudas.length, 8, 'siete deudas y un retiro');
+  assert.ok(!generada.deudas.some(d => d.id_externo === 'CTR-2025-027'),
+    'un contrato terminado no se reenvia: su deuda sigue con lo que se entrego antes');
   assert.equal(generada.deudas.filter(d => d.accion === 'retirar').length, 1, 'un retiro: el que pago en la oficina');
   assert.ok(!generada.deudas.some(d => d.id_externo === 'CTR-2026-008'), 'lo que nunca se entrego no se retira');
   assert.equal(proponerIdDeLote(CORTE), 'PAT-2026-09-18-01');
