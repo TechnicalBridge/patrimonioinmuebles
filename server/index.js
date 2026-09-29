@@ -14,7 +14,10 @@ import {
 } from './db.js';
 import {
   cargosDeContrato,
+  carteraDelLote,
+  cobranza,
   emitirLote,
+  enviarLote,
   generarCargosDelMes,
   hoy,
   listarContratos,
@@ -317,13 +320,24 @@ app.post('/api/admin/arriendos/lotes', requireAdmin,
 app.post('/api/admin/arriendos/lotes/:id/enviado', requireAdmin,
   manejar((req) => marcarLoteEnviado(req.params.id)));
 
+app.get('/api/admin/arriendos/cobranza', requireAdmin, manejar(() => cobranza()));
+
+// Entregarle el lote a la agencia. Es la unica ruta que llama afuera, y por
+// eso la unica que espera: la respuesta de la agencia.
+app.post('/api/admin/arriendos/lotes/:id/envio', requireAdmin, async (req, res) => {
+  try {
+    res.json(await enviarLote(req.params.id));
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
 // La cartera como archivo, para el modo sin integracion: se descarga y se
 // entrega a mano.
 app.get('/api/admin/arriendos/lotes/:id/archivo', requireAdmin, (req, res) => {
   try {
     const lote = verLote(req.params.id);
-    const cartera = previsualizarCartera(lote.fecha_corte);
-    cartera.lote.id_externo = lote.id_externo;
+    const cartera = carteraDelLote(lote.id);
     res.setHeader('Content-Disposition', `attachment; filename="${lote.id_externo}.json"`);
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.send(JSON.stringify(cartera, null, 2));

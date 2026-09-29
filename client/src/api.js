@@ -89,6 +89,14 @@ export function marcarLoteEnviado(id) {
   return request(`/admin/arriendos/lotes/${id}/enviado`, { method: 'POST' });
 }
 
+export function getCobranza() {
+  return request('/admin/arriendos/cobranza');
+}
+
+export function enviarLote(id) {
+  return request(`/admin/arriendos/lotes/${id}/envio`, { method: 'POST' });
+}
+
 /**
  * Descarga la cartera como archivo.
  *

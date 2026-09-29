@@ -101,6 +101,7 @@ export function construirCartera({ fechaCorte, idExterno }) {
          FROM collection_batch_items i
          JOIN collection_batches b ON b.id = i.batch_id
         WHERE i.lease_id = ? AND i.accion = 'registrar' AND b.estado <> 'borrador'
+          AND COALESCE(i.resultado, '') <> 'rechazada'
           AND NOT EXISTS (
             SELECT 1 FROM collection_batch_items r
               JOIN collection_batches rb ON rb.id = r.batch_id

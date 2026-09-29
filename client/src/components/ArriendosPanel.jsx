@@ -2,9 +2,11 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   descargarLote,
   emitirCartera,
+  enviarLote,
   formatDate,
   formatPrice,
   generarCargos,
+  getCobranza,
   getContratos,
   getLotes,
   getMorosos,
@@ -24,12 +26,17 @@ export default function ArriendosPanel() {
   const [abierto, setAbierto] = useState(null);
   const [pago, setPago] = useState(null);
   const [aviso, setAviso] = useState(null);
+  //  A quien se le entrega la cartera. Sin agencia configurada, se descarga y
+  //  se marca enviada a mano.
+  const [cobranza, setCobranza] = useState({ agencia: 'la agencia', configurada: false });
+  const [enviando, setEnviando] = useState(null);
 
   const cargar = useCallback(async () => {
-    const [m, c, l] = await Promise.all([getMorosos(corte), getContratos(), getLotes()]);
+    const [m, c, l, cb] = await Promise.all([getMorosos(corte), getContratos(), getLotes(), getCobranza()]);
     setMorosos(m);
     setContratos(c);
     setLotes(l);
+    setCobranza(cb);
   }, [corte]);
 
   useEffect(() => {
@@ -47,6 +54,16 @@ export default function ArriendosPanel() {
     }
   }
 
+  async function enviar(lote) {
+    setEnviando(lote.id);
+    await accion(() => enviarLote(lote.id), (r) => {
+      const { aceptadas, recibidas, rechazadas } = r.respuesta;
+      return `${cobranza.agencia} aceptó ${aceptadas} de ${recibidas}`
+        + (rechazadas ? `. El motivo de ${rechazadas === 1 ? 'la rechazada' : 'las rechazadas'} está en la tabla.` : '.');
+    });
+    setEnviando(null);
+  }
+
   const deudaTotal = (moneda) =>
     morosos.filter((m) => m.moneda === moneda).reduce((t, m) => t + m.deuda, 0);
 
@@ -61,7 +78,8 @@ export default function ArriendosPanel() {
           className="btn"
           type="button"
           onClick={() => accion(() => emitirCartera(corte), (r) =>
-            `Cartera ${r.lote.id_externo} emitida con ${r.lote.items.length} deudas. Queda en borrador hasta que la marques como enviada.`
+            `Cartera ${r.lote.id_externo} emitida con ${r.lote.items.length} deudas. Queda en borrador `
+            + (cobranza.configurada ? `hasta que la envíes a ${cobranza.agencia}.` : 'hasta que la marques como enviada.')
           )}
         >
           Emitir cartera
@@ -253,6 +271,7 @@ export default function ArriendosPanel() {
               <th>Deudas</th>
               <th>Estado</th>
               <th>Enviada</th>
+              <th>Respuesta</th>
               <th></th>
             </tr>
           </thead>
@@ -265,6 +284,14 @@ export default function ArriendosPanel() {
                 <td>{l.estado}</td>
                 <td>{l.enviado_en ? formatDate(l.enviado_en) : '—'}</td>
                 <td>
+                  {l.respuesta ? `${l.respuesta.aceptadas} de ${l.respuesta.recibidas} aceptadas` : '—'}
+                  {l.respuesta?.rechazos.map((r) => (
+                    <span key={r.id_externo} className="muted" style={{ display: 'block', fontSize: 13 }}>
+                      {r.id_externo}: {r.motivo}
+                    </span>
+                  ))}
+                </td>
+                <td>
                   <button
                     type="button"
                     className="linkish"
@@ -276,7 +303,17 @@ export default function ArriendosPanel() {
                   >
                     Descargar
                   </button>
-                  {l.estado === 'borrador' && (
+                  {l.estado === 'borrador' && cobranza.configurada && (
+                    <button
+                      type="button"
+                      className="linkish"
+                      disabled={enviando === l.id}
+                      onClick={() => enviar(l)}
+                    >
+                      {enviando === l.id ? 'Enviando…' : `Enviar a ${cobranza.agencia}`}
+                    </button>
+                  )}
+                  {l.estado === 'borrador' && !cobranza.configurada && (
                     <button
                       type="button"
                       className="linkish"
@@ -292,7 +329,7 @@ export default function ArriendosPanel() {
             ))}
             {lotes.length === 0 && (
               <tr>
-                <td colSpan="6" className="muted">
+                <td colSpan="7" className="muted">
                   Todavía no se ha entregado ninguna cartera.
                 </td>
               </tr>

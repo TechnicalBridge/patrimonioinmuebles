@@ -5,6 +5,14 @@
 Sitio y panel de una corredora de propiedades chilena. Proyecto de Capstone; la empresa, las
 personas y las propiedades son ficticias.
 
+**Contexto:** Kobra fue el cliente directo original y se retiró. El equipo creó APOFYX como
+cliente ficticio para continuar el Capstone. Patrimonio Inmuebles representa al acreedor
+ficticio que entrega su cartera a APOFYX y recibe de vuelta los resultados de DataBridge.
+
+La [evaluación local](#evaluación-local-del-29-de-septiembre-de-2026) registra las verificaciones
+y límites de esta aplicación. La [evaluación general](../EVALUACION_GENERAL.md) explica el
+conjunto cuando los tres proyectos están dentro de Capstone.
+
 **Se levanta con una orden** y queda en http://localhost:3001 — solo hace falta Docker:
 
 ```powershell
@@ -115,9 +123,11 @@ npm run dev
 
 Vite recarga al guardar y manda `/api` al servidor. La base queda en `server/patrimonio.db`.
 
-> **Ojo con el esquema.** Las tablas se crean con `CREATE TABLE IF NOT EXISTS`, así que **un
-> cambio de columnas no se aplica sobre una base existente**: hay que borrar
-> `server/patrimonio.db` y dejar que el servidor la regenere con los datos de demostración.
+> **Evolución del esquema.** Las tablas se crean con `CREATE TABLE IF NOT EXISTS`, que no
+> actualiza por sí solo las columnas de una tabla existente. `server/db.js` incorpora un ajuste
+> explícito para `collection_batches.cartera`, pero todavía no hay un historial formal de
+> migraciones. Antes de modificar una base existente, respaldarla y preparar una migración;
+> regenerarla solo corresponde a una base de demostración cuyos datos puedan descartarse.
 
 ---
 
@@ -144,7 +154,7 @@ En este repositorio eso se traduce en dos cosas concretas:
 
 | Práctica | Qué resuelve |
 | --- | --- |
-| **Integración continua** | GitHub Actions corre las 14 pruebas y compila el cliente en cada push |
+| **Integración continua** | GitHub Actions corre las 18 pruebas y compila el cliente en cada push |
 | **Pruebas sobre base temporal** | Corren con `PATRIMONIO_DB` apuntando a un archivo temporal, así que **nunca tocan los datos de desarrollo**. Una de ellas compara la cartera que genera el panel contra el ejemplo publicado del contrato: si alguno de los dos cambia, la prueba falla |
 
 ---
@@ -187,7 +197,12 @@ sus días de mora, y permite:
 - **Generar los cargos del mes.** Correrlo dos veces no cobra dos veces.
 - **Registrar un pago** recibido en la oficina, total o parcial.
 - **Emitir la cartera** a una fecha de corte. Queda en borrador y se puede descargar como
-  archivo; recién al marcarla como enviada cuenta como entregada.
+  archivo; recién al enviarla cuenta como entregada.
+- **Enviarla a la agencia** con el botón *Enviar a APOFYX*, si `COBRANZA_URL` y `COBRANZA_CLAVE`
+  están configuradas. El lote guarda la respuesta de la agencia contrato por contrato: cuántas
+  aceptó y, de las que no, el motivo (por ejemplo, que pasó los 120 días de mora y se la
+  devuelve). Si la agencia no contesta, el lote sigue en borrador y se puede volver a enviar tal
+  cual. Sin agencia configurada, el botón es *Marcar enviada* y el archivo se entrega a mano.
 
 ### Los arriendos de demostración
 
@@ -303,7 +318,7 @@ Documentadas en [`.env.example`](.env.example). Todas tienen valor por omisión.
 npm test
 ```
 
-**14 pruebas** con `node:test`, sobre una base temporal, así que no tocan `server/patrimonio.db`.
+**18 pruebas** con `node:test`, sobre una base temporal, así que no tocan `server/patrimonio.db`.
 
 | Qué cubre |
 | --- |
@@ -311,6 +326,7 @@ npm test
 | Que emitir los cargos del mes dos veces no cobre dos veces |
 | Que un pago en la oficina deje el **saldo** en la cartera, no el monto original, y que el mismo pago no abone dos veces |
 | Que el lote se emita, se descargue y se marque enviado una sola vez |
+| Que el botón le entregue el lote a la agencia y guarde su respuesta contrato por contrato; que si la agencia falla el lote siga en borrador, y que un retiro vaya solo por una deuda que la agencia recibió |
 | Los eventos de pago: firma, antirrepetición y deduplicación |
 | Que la cartera generada sea **exactamente** el ejemplo publicado del contrato de integración, y que la copia local siga al día con la de `TB_web` si ese repositorio está al lado |
 | Que dos propiedades con el mismo título no revienten: la segunda recibe otro slug |
@@ -322,3 +338,74 @@ npm test
 Este repositorio es una de tres piezas: **Patrimonio Inmuebles** →
 [**APOFYX**](https://github.com/TechnicalBridge/APOFYX) →
 [**DataBridge**](https://github.com/TechnicalBridge/TB_web).
+
+## Evaluación local del 29 de septiembre de 2026
+
+### Estado y evidencia
+
+La aplicación cubre el origen de la deuda dentro del caso ficticio: contratos, cargos del mes,
+pagos recibidos y emisión de cartera. También materializa el retorno del pago desde la agencia.
+El sitio inmobiliario da contexto al acreedor, mientras que el módulo de arriendos conecta
+directamente con el objetivo de integración del Capstone.
+
+| Comprobación | Resultado |
+| --- | --- |
+| `npm test` desde la raíz del proyecto | **18 pruebas aprobadas**, sin fallos ni omisiones |
+| `npm run build` en `client/` | Compilación correcta; 52 módulos |
+| Node utilizado en la revisión | 24.14.1; la CI declara Node 22 |
+| Persistencia de pruebas | Archivos SQLite temporales; no se usó la base del usuario para los casos de prueba |
+| Contrato compartido | Pasó la comparación del ejemplo local con el de TB_web |
+| Docker Compose | Configuración válida; un servicio `sitio` |
+| Aplicación existente | `/api/health` respondió HTTP 200 en el puerto 3001 |
+
+La compilación de revisión se escribió fuera del proyecto, en una carpeta temporal. El
+contenedor existente no se reconstruyó. Se verificó compilación y pruebas del servidor, no un
+recorrido visual completo del navegador ni una suite automática del frontend.
+
+### Fortalezas comprobables
+
+- `server/arriendos.js` separa generación de cargos, abonos, morosidad, lotes y aplicación de
+  eventos. El mismo período o pago no debe generar cargos o abonos duplicados.
+- `server/cartera.js` convierte los datos del negocio al contrato de integración, sin requerir
+  acceso a una base MySQL ni a las tablas de otra empresa.
+- El lote guarda la respuesta de la agencia por contrato. Ante un fallo del envío conserva el
+  borrador y permite reintentar el mismo contenido.
+- La API conserva el cuerpo original para verificar HMAC. Sin `EVENTOS_SECRET`, el receptor
+  de eventos queda deshabilitado.
+- Las pruebas ejercitan el servidor con una agencia HTTP simulada y archivos temporales.
+  Comprueban también que las llaves foráneas sigan activas después de exportar la base.
+
+### Límites actuales
+
+| Área | Evidencia en el código | Implicación |
+| --- | --- | --- |
+| Autenticación del panel | `ADMIN_PASSWORD` y `sessions = new Set()` en `server/index.js` | Una clave compartida y sesiones en memoria; no hay usuarios individuales ni expiración de token |
+| Sesiones entre procesos | Cada proceso mantiene su propio conjunto de tokens | Reiniciar pierde las sesiones; replicar requeriría compartir o rediseñar ese estado |
+| Orígenes y acceso | `app.use(cors())`; login sin limitador de intentos en ese archivo | Restringir CORS y proteger el login antes de exponer el servicio |
+| Escritura de datos | sql.js mantiene la base en memoria y `persist` la exporta a archivo | Mantener una instancia escritora; varios procesos sobre el mismo archivo necesitan otra estrategia |
+| Migraciones | Creación de tablas y un ajuste explícito de columna | Falta versionado general de cambios y prueba de actualización sin pérdida de datos |
+| Validación de interfaz | Existe build, pero `client/package.json` no declara una suite de pruebas | Compilar no comprueba accesibilidad ni todos los recorridos del panel |
+
+Estos límites no impiden demostrar el escenario actual. Sí delimitan el tipo de despliegue
+que puede defenderse con la evidencia disponible.
+
+### Pendientes y operación
+
+1. Mantener la ejecución de una sola instancia escritora y documentar respaldo/restauración
+   del archivo indicado por `PATRIMONIO_DB` o del volumen `patrimonio_datos`.
+2. Añadir migraciones versionadas antes de ampliar el esquema sobre datos que deban conservarse.
+3. Si se amplía el acceso al panel, incorporar usuarios, roles, caducidad/revocación de sesiones
+   y límite de intentos; cambiar la contraseña de demostración.
+4. Probar en navegador los recorridos de emisión, envío parcial, fallo de agencia y pago que
+   vuelve por evento. Las pruebas actuales del servidor ya aportan una base para esos casos.
+5. Completar los roles del equipo y mantener el catálogo de datos explícitamente ficticio.
+
+Para diagnosticar un envío, revisar `COBRANZA_URL`, `COBRANZA_CLAVE` y
+`COBRANZA_AGENCIA_RUT`, y después el resultado por contrato del lote. Para un aviso de pago,
+revisar `EVENTOS_SECRET`, la firma y el identificador deduplicado. Recibir HTTP 200 de la
+agencia no significa que todas las deudas hayan sido aceptadas por DataBridge.
+
+En la demo conjunta el sitio usa **5174**; al ejecutar este proyecto solo con `npm run dev`,
+Vite usa **5173**. Con Docker, Express sirve el sitio compilado y la API en **3001**.
+
+La bitácora `Technical-Bridge/` queda fuera de esta evaluación.

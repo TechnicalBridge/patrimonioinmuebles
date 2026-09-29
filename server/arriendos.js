@@ -3,8 +3,9 @@
 // Aca vive lo que Patrimonio hace por su cuenta. La unica parte que mira hacia
 // afuera es la cartera, y esa se arma en cartera.js.
 
-import { all, get, run } from './db.js';
+import { all, get, run, parseJson } from './db.js';
 import { construirCartera, proponerIdDeLote } from './cartera.js';
+import { COBRANZA } from './empresa.js';
 
 const MESES = [
   'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
@@ -149,17 +150,33 @@ export function registrarPago({ charge_id, monto, medio = 'transferencia', pagad
 //  Cartera hacia la cobranza
 // ---------------------------------------------------------------------------
 
+/** Los lotes, con lo que respondio la agencia. Sin la cartera entera: para la lista no hace falta. */
 export function listarLotes() {
   return all(`
-    SELECT b.*,
+    SELECT b.id, b.id_externo, b.fecha_corte, b.estado, b.enviado_en, b.respuesta, b.created_at,
            (SELECT COUNT(*) FROM collection_batch_items i WHERE i.batch_id = b.id) AS deudas
       FROM collection_batches b ORDER BY b.fecha_corte DESC, b.id DESC
-  `);
+  `).map(({ respuesta, ...lote }) => ({ ...lote, respuesta: resumenDeRespuesta(parseJson(respuesta, null)) }));
+}
+
+/** Lo que importa de la respuesta de la agencia: cuantas entraron, y por que no las otras. */
+function resumenDeRespuesta(r) {
+  if (!r) return null;
+  return {
+    recibidas: r.recibidas,
+    aceptadas: r.aceptadas,
+    rechazadas: r.rechazadas,
+    rechazos: (r.resultados || [])
+      .filter((x) => x.resultado === 'rechazada')
+      .map((x) => ({ id_externo: x.id_externo, motivo: (x.errores || []).map((e) => e.mensaje).join('; ') })),
+  };
 }
 
 export function verLote(id) {
   const lote = get('SELECT * FROM collection_batches WHERE id = ?', [Number(id)]);
   if (!lote) throw Object.assign(new Error('El lote no existe'), { status: 404 });
+  delete lote.cartera;
+  lote.respuesta = resumenDeRespuesta(parseJson(lote.respuesta, null));
   lote.items = all(
     `SELECT i.*, l.codigo, t.nombre AS arrendatario
        FROM collection_batch_items i
@@ -189,8 +206,8 @@ export function emitirLote(fechaCorte = hoy()) {
     throw Object.assign(new Error('No hay nada que cobrar a esa fecha'), { status: 400 });
   }
   const batchId = run(
-    'INSERT INTO collection_batches (id_externo, fecha_corte, estado) VALUES (?, ?, ?)',
-    [idExterno, fechaCorte, 'borrador']
+    'INSERT INTO collection_batches (id_externo, fecha_corte, estado, cartera) VALUES (?, ?, ?, ?)',
+    [idExterno, fechaCorte, 'borrador', JSON.stringify(cartera)]
   );
   for (const deuda of cartera.deudas) {
     const contrato = get('SELECT id, moneda FROM leases WHERE codigo = ?', [deuda.id_externo]);
@@ -204,6 +221,77 @@ export function emitirLote(fechaCorte = hoy()) {
     );
   }
   return { lote: verLote(batchId), cartera };
+}
+
+/**
+ * La cartera de un lote tal como se emitio. Los lotes de antes de que se
+ * guardara se rearman a su fecha de corte, que es lo que hacia la descarga.
+ */
+export function carteraDelLote(id) {
+  const fila = get('SELECT id_externo, fecha_corte, cartera FROM collection_batches WHERE id = ?', [Number(id)]);
+  if (!fila) throw Object.assign(new Error('El lote no existe'), { status: 404 });
+  const guardada = parseJson(fila.cartera, null);
+  if (guardada) return guardada;
+  const cartera = previsualizarCartera(fila.fecha_corte);
+  cartera.lote.id_externo = fila.id_externo;
+  return cartera;
+}
+
+/** A quien se le entrega la cartera. Sin URL o sin clave, se descarga y se entrega a mano. */
+export function cobranza() {
+  return { agencia: COBRANZA.agencia_nombre, configurada: Boolean(COBRANZA.url && COBRANZA.clave) };
+}
+
+/**
+ * Le entrega el lote a la agencia (contrato Cartera v1) y guarda su respuesta,
+ * contrato por contrato.
+ *
+ * Va la cartera tal como se emitio. Si la respuesta se pierde y se reintenta,
+ * la agencia la reconoce como el mismo lote y contesta lo mismo sin volver a
+ * procesarla; una cartera rearmada, en cambio, podria traer otro contenido con
+ * el mismo numero, y la agencia la rechazaria.
+ */
+export async function enviarLote(id) {
+  if (!cobranza().configurada) {
+    throw Object.assign(new Error('No hay una agencia configurada: la cartera se descarga y se entrega a mano'),
+      { status: 409 });
+  }
+  const lote = verLote(id);
+  if (lote.estado !== 'borrador') {
+    throw Object.assign(new Error('Ese lote ya se envió'), { status: 409 });
+  }
+  const agencia = COBRANZA.agencia_nombre;
+  let respuesta;
+  try {
+    respuesta = await fetch(`${COBRANZA.url.replace(/\/+$/, '')}/api/v1/carteras`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${COBRANZA.clave}` },
+      body: JSON.stringify(carteraDelLote(id)),
+      signal: AbortSignal.timeout(15000),
+    });
+  } catch {
+    throw Object.assign(new Error(`${agencia} no respondió. El lote sigue en borrador: puedes reintentar.`),
+      { status: 502 });
+  }
+  const cuerpo = await respuesta.json().catch(() => null);
+  if (!respuesta.ok || !cuerpo) {
+    const motivo = cuerpo?.error?.mensaje || `respondió ${respuesta.status}`;
+    throw Object.assign(new Error(`${agencia} no recibió el lote: ${motivo}`), { status: 502 });
+  }
+
+  const estado = cuerpo.aceptadas === cuerpo.recibidas ? 'aceptado' : cuerpo.aceptadas === 0 ? 'rechazado' : 'enviado';
+  run(
+    'UPDATE collection_batches SET estado = ?, enviado_en = ?, respuesta = ? WHERE id = ?',
+    [estado, new Date().toISOString(), JSON.stringify(cuerpo), lote.id]
+  );
+  for (const r of cuerpo.resultados || []) {
+    run(
+      `UPDATE collection_batch_items SET resultado = ?
+        WHERE batch_id = ? AND lease_id = (SELECT id FROM leases WHERE codigo = ?)`,
+      [r.resultado, lote.id, r.id_externo]
+    );
+  }
+  return verLote(id);
 }
 
 export function marcarLoteEnviado(id) {

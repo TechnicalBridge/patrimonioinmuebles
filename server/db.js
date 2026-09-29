@@ -26,6 +26,11 @@ function persist() {
   fs.writeFileSync(DB_PATH, Buffer.from(data));
 }
 
+function agregarColumna(tabla, columna, tipo) {
+  const columnas = db.exec(`PRAGMA table_info(${tabla})`)[0]?.values.map((fila) => fila[1]) ?? [];
+  if (!columnas.includes(columna)) db.exec(`ALTER TABLE ${tabla} ADD COLUMN ${columna} ${tipo}`);
+}
+
 function migrate() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS agents (
@@ -207,6 +212,8 @@ function migrate() {
         CHECK (estado IN ('borrador', 'enviado', 'aceptado', 'rechazado')),
       enviado_en TEXT,
       respuesta TEXT,
+      -- La cartera tal como se emitio: es la que se envia y la que se descarga.
+      cartera TEXT,
       created_at TEXT DEFAULT (datetime('now'))
     );
 
@@ -236,6 +243,10 @@ function migrate() {
       CHECK (accion = 'registrar' OR motivo_retiro IS NOT NULL)
     );
   `);
+
+  // Lo que se le agrego a una tabla despues de crearla: una base que ya
+  // existia no lo tiene, y CREATE TABLE IF NOT EXISTS no lo agrega.
+  agregarColumna('collection_batches', 'cartera', 'TEXT');
 
   // Vistas: el saldo de un cargo y la deuda de un contrato se calculan, no se
   // guardan. Asi no hay dos numeros que puedan discrepar.
