@@ -8,7 +8,9 @@ async function request(path, options = {}) {
   const res = await fetch(`${API}${path}`, { ...options, headers });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(data.error || 'No se pudo completar la solicitud');
+    //  El 401 viaja en el error: el panel lo usa para volver al login cuando
+    //  la sesion vencio o se cerro.
+    throw Object.assign(new Error(data.error || 'No se pudo completar la solicitud'), { status: res.status });
   }
   return data;
 }
@@ -36,12 +38,42 @@ export function sendInquiry(payload) {
   return request('/inquiries', { method: 'POST', body: JSON.stringify(payload) });
 }
 
-export function adminLogin(password) {
-  return request('/admin/login', { method: 'POST', body: JSON.stringify({ password }) });
+export function adminLogin(correo, clave) {
+  return request('/admin/login', { method: 'POST', body: JSON.stringify({ correo, clave }) });
 }
+
+export function adminLogout() {
+  return request('/admin/logout', { method: 'POST' });
+}
+
+export function getYo() {
+  return request('/admin/yo');
+}
+
+// --- Clientes: interesados y arrendatarios ---
 
 export function getClients() {
   return request('/admin/clients');
+}
+
+export function getCliente(id) {
+  return request(`/admin/clients/${id}`);
+}
+
+export function crearCliente(payload) {
+  return request('/admin/clients', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export function actualizarCliente(id, payload) {
+  return request(`/admin/clients/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
+}
+
+export function crearContrato(payload) {
+  return request('/admin/arriendos/contratos', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export function terminarContrato(id) {
+  return request(`/admin/arriendos/contratos/${id}/termino`, { method: 'POST', body: '{}' });
 }
 
 export function getInquiries() {
@@ -89,8 +121,18 @@ export function marcarLoteEnviado(id) {
   return request(`/admin/arriendos/lotes/${id}/enviado`, { method: 'POST' });
 }
 
+// --- La agencia de cobranza ---
+
 export function getCobranza() {
-  return request('/admin/arriendos/cobranza');
+  return request('/admin/cobranza');
+}
+
+export function conectarCobranza(payload) {
+  return request('/admin/cobranza/conexion', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export function desconectarCobranza() {
+  return request('/admin/cobranza/conexion', { method: 'DELETE' });
 }
 
 export function enviarLote(id) {
@@ -137,7 +179,10 @@ export function formatLocation(property) {
 
 export function formatDate(value) {
   if (!value) return '';
-  const iso = value.includes('T') ? value : value.replace(' ', 'T');
+  //  Una fecha sola (2026-07-01) se lee como medianoche UTC, que en Chile
+  //  todavia es el dia anterior: se ancla al mediodia local.
+  const iso = /^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T12:00:00`
+    : value.includes('T') ? value : value.replace(' ', 'T');
   return new Date(iso).toLocaleDateString('es-CL', {
     day: '2-digit',
     month: 'short',

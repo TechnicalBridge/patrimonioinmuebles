@@ -26,9 +26,9 @@ export default function ArriendosPanel() {
   const [abierto, setAbierto] = useState(null);
   const [pago, setPago] = useState(null);
   const [aviso, setAviso] = useState(null);
-  //  A quien se le entrega la cartera. Sin agencia configurada, se descarga y
-  //  se marca enviada a mano.
-  const [cobranza, setCobranza] = useState({ agencia: 'la agencia', configurada: false });
+  //  A quien se le entrega la cartera: la agencia conectada en Cobranza. Sin
+  //  agencia, se descarga y se marca enviada a mano.
+  const [cobranza, setCobranza] = useState({ conectada: false });
   const [enviando, setEnviando] = useState(null);
 
   const cargar = useCallback(async () => {
@@ -78,8 +78,9 @@ export default function ArriendosPanel() {
           className="btn"
           type="button"
           onClick={() => accion(() => emitirCartera(corte), (r) =>
-            `Cartera ${r.lote.id_externo} emitida con ${r.lote.items.length} deudas. Queda en borrador `
-            + (cobranza.configurada ? `hasta que la envíes a ${cobranza.agencia}.` : 'hasta que la marques como enviada.')
+            `Cartera ${r.lote.id_externo} emitida con ${r.lote.items.length} clientes con contrato, `
+            + `${r.lote.items.filter((i) => i.monto_enviado > 0).length} con deuda. Queda en borrador `
+            + (cobranza.conectada ? `hasta que la envíes a ${cobranza.agencia}.` : 'hasta que la marques como enviada.')
           )}
         >
           Emitir cartera
@@ -260,6 +261,11 @@ export default function ArriendosPanel() {
         <div>
           <p className="kicker">Entregas</p>
           <h2>Cartera entregada a cobranza</h2>
+          <p className="muted">
+            {cobranza.conectada
+              ? `Va a ${cobranza.agencia}: todos los clientes con contrato, deban o no. La agencia detecta a los morosos.`
+              : 'Sin agencia conectada: la cartera se descarga y se entrega a mano. Conéctala en la pestaña Cobranza.'}
+          </p>
         </div>
       </div>
       <div className="table-wrap">
@@ -268,7 +274,7 @@ export default function ArriendosPanel() {
             <tr>
               <th>Lote</th>
               <th>Corte</th>
-              <th>Deudas</th>
+              <th>Clientes</th>
               <th>Estado</th>
               <th>Enviada</th>
               <th>Respuesta</th>
@@ -303,7 +309,7 @@ export default function ArriendosPanel() {
                   >
                     Descargar
                   </button>
-                  {l.estado === 'borrador' && cobranza.configurada && (
+                  {l.estado === 'borrador' && cobranza.conectada && (
                     <button
                       type="button"
                       className="linkish"
@@ -313,7 +319,7 @@ export default function ArriendosPanel() {
                       {enviando === l.id ? 'Enviando…' : `Enviar a ${cobranza.agencia}`}
                     </button>
                   )}
-                  {l.estado === 'borrador' && !cobranza.configurada && (
+                  {l.estado === 'borrador' && !cobranza.conectada && (
                     <button
                       type="button"
                       className="linkish"

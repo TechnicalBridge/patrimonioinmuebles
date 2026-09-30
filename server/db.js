@@ -2,7 +2,7 @@ import initSqlJs from 'sql.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { seedIfEmpty } from './seed.js';
+import { seedIfEmpty, sembrarAdministrador } from './seed.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // PATRIMONIO_DB permite otra base: las pruebas usan un archivo temporal para
@@ -31,7 +31,11 @@ function agregarColumna(tabla, columna, tipo) {
   if (!columnas.includes(columna)) db.exec(`ALTER TABLE ${tabla} ADD COLUMN ${columna} ${tipo}`);
 }
 
-function migrate() {
+// ===========================================================================
+//  VERSION 1 — el esquema inicial, tal como estaba antes del versionado
+// ===========================================================================
+
+function esquemaV1() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS agents (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -277,6 +281,262 @@ function migrate() {
   `);
 }
 
+// ===========================================================================
+//  VERSION 2 — clientes unificados, usuarios, sesiones y cobranza generica
+//
+//  - Un solo cliente. El interesado que pregunta por una propiedad y el
+//    arrendatario que firmo son la misma persona en otra etapa: 'tenants' se
+//    funde en 'clients', y el contrato apunta al cliente. El RUT pasa a
+//    'clients' (opcional: un interesado no lo necesita), y un trigger impide
+//    firmar un contrato con un cliente sin RUT.
+//  - Usuarios con clave y sesiones guardadas en la base, en vez de una clave
+//    unica y sesiones en memoria que se perdian al reiniciar.
+//  - La conexion con la agencia de cobranza, en la base y no en variables de
+//    entorno: se configura desde el panel, con cualquier agencia que hable el
+//    contrato de integracion.
+//  - 'cobranza' en vez de 'databridge' como medio de pago: Patrimonio no sabe
+//    ni tiene por que saber que plataforma cobro.
+//  - 'parcial' para un lote que la agencia acepto en parte, en vez de reusar
+//    'enviado' para dos cosas.
+//
+//  SQLite no cambia un CHECK ni una llave foranea con ALTER TABLE: esas tablas
+//  se reconstruyen (crear la nueva, copiar, borrar la vieja, renombrar), con
+//  las llaves foraneas apagadas mientras tanto y revisadas al final.
+// ===========================================================================
+
+const RUT_VALIDO = `rut GLOB '[0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9K]' OR
+        rut GLOB '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9K]'`;
+
+function aV2() {
+  db.exec('PRAGMA foreign_keys = OFF');
+  try {
+    db.exec(ESQUEMA_V2);
+  } catch (error) {
+    //  A medio camino la base quedaria sin clientes ni contratos: se deshace.
+    try { db.exec('ROLLBACK'); } catch { /* ya no habia transaccion */ }
+    throw error;
+  }
+  const rotas = db.exec('PRAGMA foreign_key_check');
+  if (rotas.length) {
+    throw new Error(`La migracion a la version 2 dejo llaves foraneas rotas: ${JSON.stringify(rotas[0].values)}`);
+  }
+  encenderLlavesForaneas();
+}
+
+const ESQUEMA_V2 = `
+    BEGIN;
+
+    -- Las vistas nombran tablas que se van a reconstruir: se rehacen al final.
+    DROP VIEW IF EXISTS v_lease_debt;
+    DROP VIEW IF EXISTS v_charge_balance;
+
+    -- ---- Un solo cliente --------------------------------------------------
+    CREATE TABLE clients_v2 (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      tipo TEXT NOT NULL DEFAULT 'persona' CHECK (tipo IN ('persona', 'empresa')),
+      -- Normalizado, sin puntos y con guion: 16482337-7. Es la llave con la
+      -- que el cliente se identifica fuera de Patrimonio. Opcional hasta que
+      -- firma un contrato (ver el trigger contrato_con_rut).
+      rut TEXT UNIQUE CHECK (rut IS NULL OR ${RUT_VALIDO}),
+      nombre TEXT NOT NULL,
+      apellido TEXT,
+      correo TEXT,
+      telefono TEXT,
+      tipo_interes TEXT,
+      presupuesto TEXT,
+      notas TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      -- Sin correo ni telefono no hay por donde contactarlo, ni cobrarle.
+      CHECK (correo IS NOT NULL OR telefono IS NOT NULL)
+    );
+    INSERT INTO clients_v2 (id, tipo, rut, nombre, apellido, correo, telefono,
+                            tipo_interes, presupuesto, notas, created_at)
+      SELECT id, 'persona', NULL, nombre, apellido, correo, telefono,
+             tipo_interes, presupuesto, notas, created_at
+        FROM clients;
+    INSERT INTO clients_v2 (tipo, rut, nombre, correo, telefono, notas, created_at)
+      SELECT tipo, rut, nombre, correo, telefono, notas, created_at FROM tenants;
+
+    CREATE TABLE leases_v2 (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      codigo TEXT NOT NULL UNIQUE,
+      property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE RESTRICT,
+      client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE RESTRICT,
+      concepto TEXT NOT NULL DEFAULT 'Arriendo mensual',
+      fecha_inicio TEXT NOT NULL CHECK (
+        fecha_inicio GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+      ),
+      fecha_termino TEXT,
+      renta_monto REAL NOT NULL CHECK (renta_monto > 0),
+      moneda TEXT NOT NULL DEFAULT 'CLP' CHECK (moneda IN ('CLP', 'UF')),
+      dia_vencimiento INTEGER NOT NULL DEFAULT 5
+        CHECK (dia_vencimiento BETWEEN 1 AND 28),
+      estado TEXT NOT NULL DEFAULT 'vigente'
+        CHECK (estado IN ('vigente', 'terminado')),
+      created_at TEXT DEFAULT (datetime('now')),
+      CHECK (fecha_termino IS NULL OR fecha_termino >= fecha_inicio)
+    );
+    INSERT INTO leases_v2 (id, codigo, property_id, client_id, concepto, fecha_inicio,
+                           fecha_termino, renta_monto, moneda, dia_vencimiento, estado, created_at)
+      SELECT l.id, l.codigo, l.property_id, c.id, l.concepto, l.fecha_inicio,
+             l.fecha_termino, l.renta_monto, l.moneda, l.dia_vencimiento, l.estado, l.created_at
+        FROM leases l
+        JOIN tenants t ON t.id = l.tenant_id
+        JOIN clients_v2 c ON c.rut = t.rut;
+
+    DROP TABLE leases;
+    DROP TABLE tenants;
+    DROP TABLE clients;
+    ALTER TABLE clients_v2 RENAME TO clients;
+    ALTER TABLE leases_v2 RENAME TO leases;
+
+    -- ---- Pagos: la cobranza, sin nombrar a la plataforma ------------------
+    CREATE TABLE charge_payments_v2 (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      charge_id INTEGER NOT NULL REFERENCES charges(id) ON DELETE CASCADE,
+      monto REAL NOT NULL CHECK (monto > 0),
+      -- 'cobranza': llego por el aviso de la agencia, sea cual sea la
+      -- plataforma donde pago el arrendatario.
+      medio TEXT NOT NULL CHECK (medio IN ('transferencia', 'efectivo', 'cobranza')),
+      pagado_en TEXT NOT NULL,
+      -- Id del pago en la cobranza cuando llega por aviso. El UNIQUE hace que
+      -- un aviso repetido no abone dos veces.
+      referencia TEXT UNIQUE,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+    INSERT INTO charge_payments_v2 (id, charge_id, monto, medio, pagado_en, referencia, created_at)
+      SELECT id, charge_id, monto, CASE medio WHEN 'databridge' THEN 'cobranza' ELSE medio END,
+             pagado_en, referencia, created_at
+        FROM charge_payments;
+    DROP TABLE charge_payments;
+    ALTER TABLE charge_payments_v2 RENAME TO charge_payments;
+
+    -- ---- Lotes: 'parcial' cuando la agencia acepta una parte -------------
+    CREATE TABLE collection_batches_v2 (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id_externo TEXT NOT NULL UNIQUE,
+      fecha_corte TEXT NOT NULL,
+      estado TEXT NOT NULL DEFAULT 'borrador'
+        CHECK (estado IN ('borrador', 'enviado', 'aceptado', 'parcial', 'rechazado')),
+      enviado_en TEXT,
+      respuesta TEXT,
+      -- La cartera tal como se emitio: es la que se envia y la que se descarga.
+      cartera TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+    INSERT INTO collection_batches_v2 (id, id_externo, fecha_corte, estado, enviado_en,
+                                       respuesta, cartera, created_at)
+      SELECT id, id_externo, fecha_corte, estado, enviado_en, respuesta, cartera, created_at
+        FROM collection_batches;
+    DROP TABLE collection_batches;
+    ALTER TABLE collection_batches_v2 RENAME TO collection_batches;
+
+    -- ---- Contratos solo con clientes identificados -----------------------
+    CREATE TRIGGER contrato_con_rut BEFORE INSERT ON leases
+    WHEN (SELECT rut FROM clients WHERE id = NEW.client_id) IS NULL
+    BEGIN
+      SELECT RAISE(ABORT, 'Para firmar un contrato el cliente necesita RUT');
+    END;
+    CREATE TRIGGER contrato_con_rut_al_cambiar BEFORE UPDATE OF client_id ON leases
+    WHEN (SELECT rut FROM clients WHERE id = NEW.client_id) IS NULL
+    BEGIN
+      SELECT RAISE(ABORT, 'Para firmar un contrato el cliente necesita RUT');
+    END;
+    CREATE TRIGGER arrendatario_conserva_rut BEFORE UPDATE OF rut ON clients
+    WHEN NEW.rut IS NULL AND EXISTS (SELECT 1 FROM leases WHERE client_id = NEW.id)
+    BEGIN
+      SELECT RAISE(ABORT, 'Un cliente con contrato no puede quedar sin RUT');
+    END;
+
+    -- ---- Usuarios y sesiones ---------------------------------------------
+    CREATE TABLE users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      correo TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      nombre TEXT NOT NULL,
+      -- scrypt con sal propia: 'scrypt$<sal>$<huella>'. La clave no se guarda.
+      clave_hash TEXT NOT NULL,
+      activo INTEGER NOT NULL DEFAULT 1 CHECK (activo IN (0, 1)),
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    -- Una sesion por inicio. Se guarda la huella del token, no el token: quien
+    -- lea la base no puede entrar con lo que ve.
+    CREATE TABLE sessions (
+      token_hash TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      creada_en TEXT NOT NULL DEFAULT (datetime('now')),
+      expira_en TEXT NOT NULL,
+      revocada_en TEXT
+    );
+    CREATE INDEX ix_sessions_user ON sessions(user_id);
+
+    -- ---- La agencia de cobranza ------------------------------------------
+    -- Una sola fila (id = 1). La llena el panel al conectar: la direccion y la
+    -- clave que la agencia le emitio a Patrimonio, y el secreto con que firma
+    -- sus avisos. El nombre sale de la agencia misma: Patrimonio no tiene el
+    -- de nadie escrito en el codigo.
+    CREATE TABLE agency_connection (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      nombre TEXT NOT NULL,
+      rut TEXT,
+      url TEXT NOT NULL,
+      clave TEXT NOT NULL,
+      url_avisos TEXT NOT NULL,
+      secreto_eventos TEXT,
+      conectada_en TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- ---- Vistas ----------------------------------------------------------
+    -- El saldo de un cargo y la deuda de un contrato se calculan, no se
+    -- guardan: asi no hay dos numeros que puedan discrepar.
+    CREATE VIEW v_charge_balance AS
+    SELECT c.id, c.lease_id, c.concepto, c.periodo, c.monto, c.fecha_vencimiento, c.anulado_en,
+           COALESCE(p.pagado, 0) AS pagado,
+           c.monto - COALESCE(p.pagado, 0) AS saldo
+      FROM charges c
+      LEFT JOIN (SELECT charge_id, SUM(monto) AS pagado FROM charge_payments GROUP BY charge_id) p
+        ON p.charge_id = c.id;
+
+    -- Un moroso es un contrato con al menos un cargo vencido e impago. La
+    -- vista no filtra por fecha: eso lo hace quien consulta, con su corte.
+    CREATE VIEW v_lease_debt AS
+    SELECT l.id AS lease_id, l.codigo, l.moneda, l.concepto,
+           c.rut, c.nombre AS arrendatario,
+           COUNT(b.id) AS cargos_impagos,
+           SUM(b.saldo) AS deuda,
+           MIN(b.fecha_vencimiento) AS vencimiento_mas_antiguo
+      FROM leases l
+      JOIN clients c ON c.id = l.client_id
+      JOIN v_charge_balance b ON b.lease_id = l.id
+     WHERE b.anulado_en IS NULL AND b.saldo > 0
+     GROUP BY l.id, l.codigo, l.moneda, l.concepto, c.rut, c.nombre;
+
+    COMMIT;
+`;
+
+// Cada cambio del esquema es una version. La base guarda la suya en
+// PRAGMA user_version y al arrancar se aplican solo las que le faltan, en
+// orden. Una base anterior al versionado tiene 0: la version 1 es el esquema de
+// siempre, escrito con IF NOT EXISTS, y no le hace nada.
+const MIGRACIONES = [
+  [1, esquemaV1],
+  [2, aV2],
+];
+export const VERSION = MIGRACIONES.at(-1)[0];
+
+export function versionDeLaBase() {
+  return db.exec('PRAGMA user_version')[0].values[0][0];
+}
+
+export function migrar(hasta = VERSION) {
+  for (const [numero, aplicar] of MIGRACIONES) {
+    if (numero <= versionDeLaBase() || numero > hasta) continue;
+    aplicar();
+    db.exec(`PRAGMA user_version = ${numero}`);
+  }
+  persist();
+}
+
 export function all(sql, params = []) {
   const stmt = db.prepare(sql);
   if (params.length) stmt.bind(params);
@@ -421,7 +681,13 @@ export function getProperty(id) {
   return hydrateProperty(get(`${PROPERTY_SELECT} WHERE p.id = ?`, [Number(id)]));
 }
 
-export async function initDb() {
+/**
+ * Abre la base, la lleva a la ultima version y la siembra.
+ *
+ * `hasta` y `sembrar` son para las pruebas de la migracion: dejan una base en
+ * una version anterior y sin datos de demostracion.
+ */
+export async function initDb({ hasta = VERSION, sembrar = true } = {}) {
   const SQL = await initSqlJs();
   if (fs.existsSync(DB_PATH)) {
     db = new SQL.Database(fs.readFileSync(DB_PATH));
@@ -429,8 +695,10 @@ export async function initDb() {
     db = new SQL.Database();
   }
   encenderLlavesForaneas();
-  migrate();
-  persist();
-  seedIfEmpty({ all, get, run });
+  migrar(hasta);
+  if (sembrar) {
+    seedIfEmpty({ all, get, run });
+    sembrarAdministrador({ get, run });
+  }
   return db;
 }

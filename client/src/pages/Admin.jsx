@@ -1,23 +1,35 @@
 import { useEffect, useState } from 'react';
 import ArriendosPanel from '../components/ArriendosPanel.jsx';
+import ClientesPanel from '../components/ClientesPanel.jsx';
+import CobranzaPanel from '../components/CobranzaPanel.jsx';
 import {
   adminLogin,
+  adminLogout,
   createProperty,
   deleteProperty,
   formatDate,
   formatLocation,
   formatPrice,
-  getClients,
   getInquiries,
   getProperties,
+  getYo,
 } from '../api.js';
+
+const PESTANAS = [
+  ['arriendos', 'Arriendos'],
+  ['clientes', 'Clientes'],
+  ['cobranza', 'Cobranza'],
+  ['consultas', 'Consultas'],
+  ['inventario', 'Inventario'],
+  ['nueva', 'Nueva propiedad'],
+];
 
 export default function Admin() {
   const [token, setToken] = useState(localStorage.getItem('pi_admin_token') || '');
-  const [password, setPassword] = useState('');
+  const [usuario, setUsuario] = useState(null);
+  const [credenciales, setCredenciales] = useState({ correo: '', clave: '' });
   const [error, setError] = useState('');
   const [tab, setTab] = useState('arriendos');
-  const [clients, setClients] = useState([]);
   const [inquiries, setInquiries] = useState([]);
   const [properties, setProperties] = useState([]);
   const [form, setForm] = useState({
@@ -37,21 +49,25 @@ export default function Admin() {
   });
 
   async function load() {
-    const [c, i, p] = await Promise.all([
-      getClients(),
+    const [yo, i, p] = await Promise.all([
+      getYo(),
       getInquiries(),
       getProperties({ all: '1' }),
     ]);
-    setClients(c);
+    setUsuario(yo);
     setInquiries(i);
     setProperties(p);
   }
 
   useEffect(() => {
     if (!token) return;
-    load().catch(() => {
-      localStorage.removeItem('pi_admin_token');
-      setToken('');
+    load().catch((err) => {
+      //  La sesion vencio o se cerro en otro lado: de vuelta al login.
+      if (err.status === 401) {
+        localStorage.removeItem('pi_admin_token');
+        setToken('');
+        setError(err.message);
+      }
     });
   }, [token]);
 
@@ -59,17 +75,21 @@ export default function Admin() {
     e.preventDefault();
     setError('');
     try {
-      const res = await adminLogin(password);
+      const res = await adminLogin(credenciales.correo, credenciales.clave);
       localStorage.setItem('pi_admin_token', res.token);
+      setCredenciales({ correo: '', clave: '' });
       setToken(res.token);
     } catch (err) {
       setError(err.message);
     }
   }
 
-  function logout() {
+  async function logout() {
+    //  Se cierra en el servidor, no solo en el navegador: el token deja de servir.
+    await adminLogout().catch(() => {});
     localStorage.removeItem('pi_admin_token');
     setToken('');
+    setUsuario(null);
   }
 
   async function addProperty(e) {
@@ -99,14 +119,26 @@ export default function Admin() {
         <div className="container narrow">
           <p className="kicker">Panel interno</p>
           <h1>Entrar</h1>
-          <p className="muted">Contraseña de demostración: patrimonio</p>
+          <p className="muted">Demostración: admin@patrimonioinmuebles.cl, clave patrimonio</p>
           <form className="form" onSubmit={login}>
             <label>
-              Contraseña
+              Correo
+              <input
+                type="email"
+                autoComplete="username"
+                value={credenciales.correo}
+                onChange={(e) => setCredenciales({ ...credenciales, correo: e.target.value })}
+                required
+              />
+            </label>
+            <label>
+              Clave
               <input
                 type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="current-password"
+                value={credenciales.clave}
+                onChange={(e) => setCredenciales({ ...credenciales, clave: e.target.value })}
+                required
               />
             </label>
             {error && <p className="alert error">{error}</p>}
@@ -124,8 +156,8 @@ export default function Admin() {
       <div className="container">
         <div className="section-head">
           <div>
-            <p className="kicker">Panel interno</p>
-            <h1>Clientes, consultas e inventario</h1>
+            <p className="kicker">Panel interno{usuario ? ` · ${usuario.nombre}` : ''}</p>
+            <h1>Clientes, arriendos e inventario</h1>
           </div>
           <button className="btn ghost-btn" type="button" onClick={logout}>
             Salir
@@ -133,19 +165,21 @@ export default function Admin() {
         </div>
 
         <div className="tabs">
-          {['arriendos', 'consultas', 'clientes', 'inventario', 'nueva'].map((t) => (
+          {PESTANAS.map(([t, etiqueta]) => (
             <button
               key={t}
               type="button"
               className={tab === t ? 'on' : ''}
               onClick={() => setTab(t)}
             >
-              {t}
+              {etiqueta}
             </button>
           ))}
         </div>
 
         {tab === 'arriendos' && <ArriendosPanel />}
+        {tab === 'clientes' && <ClientesPanel />}
+        {tab === 'cobranza' && <CobranzaPanel />}
 
         {tab === 'consultas' && (
           <div className="table-wrap">
@@ -173,39 +207,6 @@ export default function Admin() {
                     <td>{row.tipo_interes}</td>
                     <td>{row.property_titulo || '—'}</td>
                     <td>{row.mensaje}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {tab === 'clientes' && (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Nombre</th>
-                  <th>Apellido</th>
-                  <th>Teléfono</th>
-                  <th>Correo</th>
-                  <th>Interés</th>
-                  <th>Presupuesto</th>
-                  <th>Consultas</th>
-                  <th>Alta</th>
-                </tr>
-              </thead>
-              <tbody>
-                {clients.map((c) => (
-                  <tr key={c.id}>
-                    <td>{c.nombre}</td>
-                    <td>{c.apellido}</td>
-                    <td>{c.telefono}</td>
-                    <td>{c.correo}</td>
-                    <td>{c.tipo_interes}</td>
-                    <td>{c.presupuesto}</td>
-                    <td>{c.consultas}</td>
-                    <td>{formatDate(c.created_at)}</td>
                   </tr>
                 ))}
               </tbody>

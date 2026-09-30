@@ -15,7 +15,7 @@ import {
 import {
   cargosDeContrato,
   carteraDelLote,
-  cobranza,
+  crearContrato,
   emitirLote,
   enviarLote,
   generarCargosDelMes,
@@ -27,13 +27,15 @@ import {
   previsualizarCartera,
   procesarEvento,
   registrarPago,
+  terminarContrato,
   verLote,
 } from './arriendos.js';
+import { actualizarCliente, crearCliente, listarClientes, verCliente } from './clientes.js';
+import { conectar, desconectar, estadoDeLaCobranza, secretoDeLosAvisos } from './cobranza.js';
+import { entrar, salir, usuarioDeLaSesion } from './usuarios.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3001);
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'patrimonio';
-const sessions = new Set();
 
 const app = express();
 app.use(cors());
@@ -42,12 +44,19 @@ app.use(cors());
 // el orden, y la firma dejaria de calzar.
 app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
 
-function requireAdmin(req, res, next) {
+function tokenDe(req) {
   const header = req.headers.authorization || '';
-  const token = header.startsWith('Bearer ') ? header.slice(7) : '';
-  if (!token || !sessions.has(token)) {
-    return res.status(401).json({ error: 'No autorizado' });
+  return header.startsWith('Bearer ') ? header.slice(7) : '';
+}
+
+// La sesion se busca en la base en cada pedido: una cerrada o vencida deja de
+// servir al tiro, aunque el servidor no se haya reiniciado.
+function requireAdmin(req, res, next) {
+  const usuario = usuarioDeLaSesion(tokenDe(req));
+  if (!usuario) {
+    return res.status(401).json({ error: 'Tu sesión venció o no es válida. Vuelve a entrar.' });
   }
+  req.usuario = usuario;
   next();
 }
 
@@ -182,25 +191,24 @@ app.post('/api/inquiries', (req, res) => {
   });
 });
 
+// ===========================================================================
+//  Sesiones: cada persona con su correo y su clave
+// ===========================================================================
+
 app.post('/api/admin/login', (req, res) => {
-  const password = req.body?.password || '';
-  if (password !== ADMIN_PASSWORD) {
-    return res.status(401).json({ error: 'Contraseña incorrecta' });
+  try {
+    res.json(entrar(req.body || {}, req.ip));
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
   }
-  const token = crypto.randomBytes(24).toString('hex');
-  sessions.add(token);
-  res.json({ token });
 });
 
-app.get('/api/admin/clients', requireAdmin, (_req, res) => {
-  const rows = all(`
-    SELECT c.*,
-      (SELECT COUNT(*) FROM inquiries i WHERE i.client_id = c.id) AS consultas
-    FROM clients c
-    ORDER BY c.created_at DESC
-  `);
-  res.json(rows);
+app.post('/api/admin/logout', requireAdmin, (req, res) => {
+  salir(tokenDe(req));
+  res.json({ ok: true });
 });
+
+app.get('/api/admin/yo', requireAdmin, (req, res) => res.json(req.usuario));
 
 app.get('/api/admin/inquiries', requireAdmin, (_req, res) => {
   const rows = all(`
@@ -287,15 +295,46 @@ app.delete('/api/admin/properties/:id', requireAdmin, (req, res) => {
 //  errores de dominio traen su propio codigo en err.status.
 // ===========================================================================
 
-const manejar = (fn) => (req, res) => {
+// Lo que la base rechaza por sus reglas es un conflicto del pedido, no una
+// caida del servidor. Los triggers (un contrato sin RUT) traen su propio
+// mensaje, que ya esta escrito para quien lo lee.
+const RESTRICCIONES = [
+  [/UNIQUE constraint/i, 'Ya existe un registro con ese valor'],
+  [/FOREIGN KEY constraint/i, 'No se puede: otro registro depende de este'],
+  [/CHECK constraint/i, 'Uno de los datos no cumple las reglas'],
+];
+const DE_TRIGGER = /^(Para firmar un contrato|Un cliente con contrato)/;
+
+function responderError(res, err) {
+  if (err.status) return res.status(err.status).json({ error: err.message });
+  const regla = RESTRICCIONES.find(([patron]) => patron.test(err?.message || ''));
+  if (regla) return res.status(409).json({ error: regla[1] });
+  if (DE_TRIGGER.test(err?.message || '')) return res.status(409).json({ error: err.message });
+  console.error(err);
+  return res.status(500).json({ error: 'Error interno del servidor' });
+}
+
+const manejar = (fn) => async (req, res) => {
   try {
-    res.json(fn(req));
+    res.json(await fn(req));
   } catch (err) {
-    res.status(err.status || 500).json({ error: err.message });
+    responderError(res, err);
   }
 };
 
+// ---- Clientes: interesados y arrendatarios, en un solo registro -----------
+app.get('/api/admin/clients', requireAdmin, manejar(() => listarClientes()));
+app.post('/api/admin/clients', requireAdmin, manejar((req) => crearCliente(req.body || {})));
+app.get('/api/admin/clients/:id', requireAdmin, manejar((req) => verCliente(req.params.id)));
+app.put('/api/admin/clients/:id', requireAdmin,
+  manejar((req) => actualizarCliente(req.params.id, req.body || {})));
+
 app.get('/api/admin/arriendos/contratos', requireAdmin, manejar(() => listarContratos()));
+
+app.post('/api/admin/arriendos/contratos', requireAdmin, manejar((req) => crearContrato(req.body || {})));
+
+app.post('/api/admin/arriendos/contratos/:id/termino', requireAdmin,
+  manejar((req) => terminarContrato(req.params.id, req.body || {})));
 
 app.get('/api/admin/arriendos/contratos/:id/cargos', requireAdmin,
   manejar((req) => cargosDeContrato(Number(req.params.id))));
@@ -320,17 +359,13 @@ app.post('/api/admin/arriendos/lotes', requireAdmin,
 app.post('/api/admin/arriendos/lotes/:id/enviado', requireAdmin,
   manejar((req) => marcarLoteEnviado(req.params.id)));
 
-app.get('/api/admin/arriendos/cobranza', requireAdmin, manejar(() => cobranza()));
+// ---- La agencia de cobranza: se conecta desde el panel ---------------------
+app.get('/api/admin/cobranza', requireAdmin, manejar(() => estadoDeLaCobranza()));
+app.post('/api/admin/cobranza/conexion', requireAdmin, manejar((req) => conectar(req.body || {})));
+app.delete('/api/admin/cobranza/conexion', requireAdmin, manejar(() => desconectar()));
 
-// Entregarle el lote a la agencia. Es la unica ruta que llama afuera, y por
-// eso la unica que espera: la respuesta de la agencia.
-app.post('/api/admin/arriendos/lotes/:id/envio', requireAdmin, async (req, res) => {
-  try {
-    res.json(await enviarLote(req.params.id));
-  } catch (err) {
-    res.status(err.status || 500).json({ error: err.message });
-  }
-});
+// Entregarle el lote a la agencia: espera su respuesta.
+app.post('/api/admin/arriendos/lotes/:id/envio', requireAdmin, manejar((req) => enviarLote(req.params.id)));
 
 // La cartera como archivo, para el modo sin integracion: se descarga y se
 // entrega a mano.
@@ -349,22 +384,22 @@ app.get('/api/admin/arriendos/lotes/:id/archivo', requireAdmin, (req, res) => {
 // ===========================================================================
 //  Eventos de la cobranza (Eventos v1)
 //
-//  Sin EVENTOS_SECRET configurado el receptor queda apagado, y Patrimonio
-//  sigue funcionando sin cobranza externa. No hay secreto por defecto a
-//  proposito: uno escrito en el codigo no es un secreto.
+//  El secreto lo entrega la agencia al conectarse desde el panel, y se lee de
+//  la base en cada aviso. Sin conexion el receptor queda apagado, y
+//  Patrimonio sigue funcionando sin cobranza externa. No hay secreto por
+//  defecto a proposito: uno escrito en el codigo no es un secreto.
 // ===========================================================================
 
-const EVENTOS_SECRET = process.env.EVENTOS_SECRET || '';
 const MAX_DESFASE_SEGUNDOS = 300;
 
-function firmaValida(req) {
+function firmaValida(req, secreto) {
   const firma = String(req.headers['x-firma'] || '');
   const marca = Number(req.headers['x-timestamp']);
   if (!firma.startsWith('v1=') || !Number.isFinite(marca)) return false;
   if (Math.abs(Date.now() / 1000 - marca) > MAX_DESFASE_SEGUNDOS) return false;
 
   const esperada = crypto
-    .createHmac('sha256', EVENTOS_SECRET)
+    .createHmac('sha256', secreto)
     .update(`${marca}.${req.rawBody?.toString('utf8') ?? ''}`)
     .digest('hex');
   const recibida = firma.slice(3);
@@ -374,10 +409,11 @@ function firmaValida(req) {
 }
 
 app.post('/api/eventos', (req, res) => {
-  if (!EVENTOS_SECRET) {
+  const secreto = secretoDeLosAvisos();
+  if (!secreto) {
     return res.status(503).json({ error: 'La recepcion de eventos no esta configurada' });
   }
-  if (!firmaValida(req)) {
+  if (!firmaValida(req, secreto)) {
     return res.status(401).json({ error: 'Firma invalida o vencida' });
   }
   try {
@@ -397,22 +433,8 @@ if (fs.existsSync(clientDist)) {
 }
 
 // El ultimo recurso. Ninguna respuesta lleva el stack: al navegador le basta un
-// mensaje, y el detalle queda en el log. Lo que la base rechaza por sus reglas
-// (un unico repetido, algo en uso por otro registro, un dato fuera de rango) es
-// un conflicto del pedido, no una caida del servidor.
-const RESTRICCIONES = [
-  [/UNIQUE constraint/i, 'Ya existe un registro con ese valor'],
-  [/FOREIGN KEY constraint/i, 'No se puede: otro registro depende de este'],
-  [/CHECK constraint/i, 'Uno de los datos no cumple las reglas'],
-];
-app.use((err, _req, res, _next) => {
-  const regla = RESTRICCIONES.find(([patron]) => patron.test(err?.message || ''));
-  if (regla) {
-    return res.status(409).json({ error: regla[1] });
-  }
-  console.error(err);
-  res.status(err.status || 500).json({ error: err.status ? err.message : 'Error interno del servidor' });
-});
+// mensaje, y el detalle queda en el log.
+app.use((err, _req, res, _next) => responderError(res, err));
 
 initDb()
   .then(() => {

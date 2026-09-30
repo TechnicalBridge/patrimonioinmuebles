@@ -7,6 +7,8 @@
 //     El arriendo comercial se pacta en UF, como es habitual.
 //   - Una parcela de agrado no puede tener menos de 5.000 m² (DL 3.516).
 
+import { huellaDeClave } from './claves.js';
+
 const agents = [
   {
     nombre: 'Elena',
@@ -644,9 +646,11 @@ function sembrarArriendos({ get, run }) {
     )
   );
 
+  //  Los arrendatarios son clientes con RUT: el mismo registro que un
+  //  interesado, en la etapa en que ya firmo.
   const arrendatarioId = arrendatarios.map((t) =>
-    get('SELECT id FROM tenants WHERE rut = ?', [t.rut])?.id ?? run(
-      `INSERT INTO tenants (rut, tipo, nombre, correo, telefono, notas)
+    get('SELECT id FROM clients WHERE rut = ?', [t.rut])?.id ?? run(
+      `INSERT INTO clients (rut, tipo, nombre, correo, telefono, notas)
        VALUES (?, ?, ?, ?, ?, ?)`,
       [t.rut, t.tipo, t.nombre, t.correo, t.telefono ?? null, t.notas ?? null]
     )
@@ -661,7 +665,7 @@ function sembrarArriendos({ get, run }) {
     }
     const id = run(
       `INSERT INTO leases (
-         codigo, property_id, tenant_id, concepto, fecha_inicio, fecha_termino,
+         codigo, property_id, client_id, concepto, fecha_inicio, fecha_termino,
          renta_monto, moneda, dia_vencimiento, estado
        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 5, ?)`,
       [
@@ -702,4 +706,22 @@ function sembrarArriendos({ get, run }) {
       [loteId, contratoId[item.contrato], item.monto_enviado, item.moneda]
     );
   }
+}
+
+// -----------------------------------------------------------------------------
+//  El primer usuario del panel
+// -----------------------------------------------------------------------------
+/**
+ * Si no hay ningun usuario, crea el primero con ADMIN_CORREO y ADMIN_PASSWORD.
+ * Sin esas variables usa los de la demostracion, que estan en el README. Con
+ * usuarios ya creados no toca nada: cambiar la variable despues no cambia la
+ * clave de nadie.
+ */
+export function sembrarAdministrador({ get, run }) {
+  if (get('SELECT 1 AS hay FROM users LIMIT 1')) return;
+  run('INSERT INTO users (correo, nombre, clave_hash) VALUES (?, ?, ?)', [
+    (process.env.ADMIN_CORREO || 'admin@patrimonioinmuebles.cl').trim().toLowerCase(),
+    process.env.ADMIN_NOMBRE || 'Administración',
+    huellaDeClave(process.env.ADMIN_PASSWORD || 'patrimonio'),
+  ]);
 }

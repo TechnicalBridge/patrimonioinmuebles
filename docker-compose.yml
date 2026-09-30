@@ -21,16 +21,12 @@ services:
 
     environment:
       PORT: "3001"
-      #  La clave del panel. La de por omision es para la demostracion.
+      #  El primer usuario del panel, si la base no tiene ninguno. Los de por
+      #  omision son para la demostracion.
+      ADMIN_CORREO: ${ADMIN_CORREO:-admin@patrimonioinmuebles.cl}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-patrimonio}
-      #  Recibir avisos de pago desde la cobranza exige firma. Mientras no
-      #  haya secreto, ese endpoint queda apagado a proposito.
-      EVENTOS_SECRET: ${EVENTOS_SECRET:-}
-      #  Entregarle la cartera morosa a una agencia de cobranza. Sin estas
-      #  tres, Patrimonio funciona igual y la cartera se descarga a mano.
-      COBRANZA_URL:         ${COBRANZA_URL:-}
-      COBRANZA_CLAVE:       ${COBRANZA_CLAVE:-}
-      COBRANZA_AGENCIA_RUT: ${COBRANZA_AGENCIA_RUT:-}
+      #  La agencia de cobranza no va aqui: se conecta desde el panel
+      #  (pestaña Cobranza) y queda guardada en la base.
 
     ports:
       - "${PATRIMONIO_PORT:-3001}:3001"

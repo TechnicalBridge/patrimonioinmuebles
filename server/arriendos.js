@@ -1,11 +1,12 @@
-// Administracion de arriendos: contratos, cargos, pagos y cartera morosa.
+// Administracion de arriendos: contratos, cargos, pagos y cartera.
 //
-// Aca vive lo que Patrimonio hace por su cuenta. La unica parte que mira hacia
-// afuera es la cartera, y esa se arma en cartera.js.
+// Aca vive lo que Patrimonio hace por su cuenta. Lo que mira hacia afuera es la
+// cartera, que se arma en cartera.js, y la conexion con la agencia, que vive
+// en cobranza.js.
 
 import { all, get, run, parseJson } from './db.js';
 import { construirCartera, proponerIdDeLote } from './cartera.js';
-import { COBRANZA } from './empresa.js';
+import { conexion, llamarALaAgencia } from './cobranza.js';
 
 const MESES = [
   'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
@@ -13,6 +14,8 @@ const MESES = [
 ];
 
 export const hoy = () => new Date().toISOString().slice(0, 10);
+
+const error = (mensaje, status = 400) => Object.assign(new Error(mensaje), { status });
 
 // ---------------------------------------------------------------------------
 //  Consultas
@@ -22,12 +25,12 @@ export function listarContratos() {
   return all(`
     SELECT l.id, l.codigo, l.concepto, l.renta_monto, l.moneda, l.estado,
            l.fecha_inicio, l.dia_vencimiento,
-           t.rut, t.nombre AS arrendatario, t.correo, t.telefono,
+           c.id AS client_id, c.rut, c.nombre AS arrendatario, c.correo, c.telefono,
            p.direccion, p.comuna,
            COALESCE(d.deuda, 0) AS deuda,
            COALESCE(d.cargos_impagos, 0) AS cargos_impagos
       FROM leases l
-      JOIN tenants t ON t.id = l.tenant_id
+      JOIN clients c ON c.id = l.client_id
       JOIN properties p ON p.id = l.property_id
       LEFT JOIN v_lease_debt d ON d.lease_id = l.id
      ORDER BY l.estado, l.id
@@ -38,10 +41,10 @@ export function listarContratos() {
 export function listarMorosos(fechaCorte = hoy()) {
   const contratos = all(
     `SELECT l.id, l.codigo, l.concepto, l.moneda,
-            t.rut, t.nombre AS arrendatario, t.correo, t.telefono,
+            c.id AS client_id, c.rut, c.nombre AS arrendatario, c.correo, c.telefono,
             p.direccion, p.comuna
        FROM leases l
-       JOIN tenants t ON t.id = l.tenant_id
+       JOIN clients c ON c.id = l.client_id
        JOIN properties p ON p.id = l.property_id
       WHERE l.estado = 'vigente'
       ORDER BY l.id`
@@ -92,9 +95,8 @@ export function cargosDeContrato(leaseId) {
  */
 export function generarCargosDelMes(periodo) {
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(periodo || '')) {
-    throw Object.assign(new Error('El periodo va como 2026-09'), { status: 400 });
+    throw error('El periodo va como 2026-09');
   }
-  const mes = Number(periodo.slice(5, 7));
   const contratos = all(
     `SELECT id, renta_monto, dia_vencimiento FROM leases
       WHERE estado = 'vigente' AND fecha_inicio <= ?`,
@@ -103,21 +105,106 @@ export function generarCargosDelMes(periodo) {
 
   let emitidos = 0, existentes = 0;
   for (const c of contratos) {
-    const concepto = `Arriendo ${MESES[mes - 1]}`;
-    const ya = get(
-      'SELECT id FROM charges WHERE lease_id = ? AND periodo = ? AND concepto = ?',
-      [c.id, periodo, concepto]
-    );
-    if (ya) { existentes++; continue; }
-    run(
-      `INSERT INTO charges (lease_id, concepto, periodo, monto, fecha_vencimiento)
-       VALUES (?, ?, ?, ?, ?)`,
-      [c.id, concepto, periodo, c.renta_monto,
-       `${periodo}-${String(c.dia_vencimiento).padStart(2, '0')}`]
-    );
-    emitidos++;
+    if (emitirCargo(c, periodo)) emitidos++;
+    else existentes++;
   }
   return { periodo, emitidos, existentes };
+}
+
+/** El arriendo de un mes para un contrato. Devuelve false si ya estaba emitido. */
+function emitirCargo(contrato, periodo) {
+  const concepto = `Arriendo ${MESES[Number(periodo.slice(5, 7)) - 1]}`;
+  if (get('SELECT id FROM charges WHERE lease_id = ? AND periodo = ? AND concepto = ?',
+    [contrato.id, periodo, concepto])) {
+    return false;
+  }
+  run(
+    `INSERT INTO charges (lease_id, concepto, periodo, monto, fecha_vencimiento)
+     VALUES (?, ?, ?, ?, ?)`,
+    [contrato.id, concepto, periodo, contrato.renta_monto,
+     `${periodo}-${String(contrato.dia_vencimiento).padStart(2, '0')}`]
+  );
+  return true;
+}
+
+/** Los meses desde el de `desde` hasta el de `hasta`, inclusive: ['2026-07', '2026-08', ...]. */
+function mesesEntre(desde, hasta) {
+  const meses = [];
+  let [anio, mes] = desde.slice(0, 7).split('-').map(Number);
+  const fin = hasta.slice(0, 7);
+  for (let n = 0; n < 600; n++) {
+    const periodo = `${anio}-${String(mes).padStart(2, '0')}`;
+    if (periodo > fin) break;
+    meses.push(periodo);
+    mes += 1;
+    if (mes === 13) { mes = 1; anio += 1; }
+  }
+  return meses;
+}
+
+// ---------------------------------------------------------------------------
+//  Contratos
+// ---------------------------------------------------------------------------
+
+/** El proximo codigo libre del año: CTR-2026-032. Es el id que viaja a la cobranza. */
+function proximoCodigo(fechaInicio) {
+  const anio = fechaInicio.slice(0, 4);
+  const usados = all('SELECT codigo FROM leases WHERE codigo LIKE ?', [`CTR-${anio}-%`])
+    .map((l) => Number(l.codigo.slice(9)) || 0);
+  return `CTR-${anio}-${String(Math.max(0, ...usados) + 1).padStart(3, '0')}`;
+}
+
+/**
+ * Firma un contrato: un cliente con RUT arrienda una propiedad del inventario.
+ *
+ * Si empezo en el pasado, se emiten de una vez los arriendos desde ese mes
+ * hasta el actual. Asi un contrato cargado con atraso queda como es: con sus
+ * meses cobrados, pagados o no.
+ */
+export function crearContrato(entrada = {}) {
+  const cliente = get('SELECT id, rut, nombre FROM clients WHERE id = ?', [Number(entrada.client_id)]);
+  if (!cliente) throw error('El cliente no existe', 404);
+  if (!cliente.rut) throw error(`${cliente.nombre} no tiene RUT: agrégalo antes de firmar el contrato`);
+  const propiedad = get('SELECT id, titulo, estatus FROM properties WHERE id = ?', [Number(entrada.property_id)]);
+  if (!propiedad) throw error('La propiedad no existe', 404);
+  if (get("SELECT 1 AS hay FROM leases WHERE property_id = ? AND estado = 'vigente'", [propiedad.id])) {
+    throw error(`${propiedad.titulo} ya tiene un contrato vigente`, 409);
+  }
+  const renta = Number(entrada.renta_monto);
+  if (!(renta > 0)) throw error('La renta tiene que ser mayor que cero');
+  const moneda = entrada.moneda || 'CLP';
+  if (!['CLP', 'UF'].includes(moneda)) throw error('La moneda va como CLP o UF');
+  const dia = Number(entrada.dia_vencimiento || 5);
+  if (!(Number.isInteger(dia) && dia >= 1 && dia <= 28)) throw error('El día de pago va del 1 al 28');
+  const inicio = String(entrada.fecha_inicio || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(inicio) || Number.isNaN(Date.parse(inicio))) {
+    throw error('La fecha de inicio va como 2026-07-01');
+  }
+
+  const codigo = proximoCodigo(inicio);
+  const id = run(
+    `INSERT INTO leases (codigo, property_id, client_id, concepto, fecha_inicio, renta_monto, moneda, dia_vencimiento)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [codigo, propiedad.id, cliente.id, String(entrada.concepto || '').trim() || 'Arriendo mensual',
+     inicio, renta, moneda, dia]
+  );
+  run("UPDATE properties SET estatus = 'arrendada' WHERE id = ?", [propiedad.id]);
+
+  const contrato = { id, renta_monto: renta, dia_vencimiento: dia };
+  const cargos = mesesEntre(inicio, hoy()).filter((periodo) => emitirCargo(contrato, periodo)).length;
+  return { ...get('SELECT * FROM leases WHERE id = ?', [id]), cargos_emitidos: cargos };
+}
+
+/** Termina un contrato. La deuda que tenga no se borra: se sigue cobrando. */
+export function terminarContrato(id, { fecha_termino } = {}) {
+  const contrato = get('SELECT * FROM leases WHERE id = ?', [Number(id)]);
+  if (!contrato) throw error('El contrato no existe', 404);
+  if (contrato.estado === 'terminado') throw error('Ese contrato ya estaba terminado', 409);
+  const fin = fecha_termino || hoy();
+  if (fin < contrato.fecha_inicio) throw error('No puede terminar antes de empezar');
+  run("UPDATE leases SET estado = 'terminado', fecha_termino = ? WHERE id = ?", [fin, contrato.id]);
+  run("UPDATE properties SET estatus = 'disponible' WHERE id = ?", [contrato.property_id]);
+  return get('SELECT * FROM leases WHERE id = ?', [contrato.id]);
 }
 
 /** Un pago recibido en la oficina. */
@@ -178,10 +265,10 @@ export function verLote(id) {
   delete lote.cartera;
   lote.respuesta = resumenDeRespuesta(parseJson(lote.respuesta, null));
   lote.items = all(
-    `SELECT i.*, l.codigo, t.nombre AS arrendatario
+    `SELECT i.*, l.codigo, c.nombre AS arrendatario
        FROM collection_batch_items i
        JOIN leases l ON l.id = i.lease_id
-       JOIN tenants t ON t.id = l.tenant_id
+       JOIN clients c ON c.id = l.client_id
       WHERE i.batch_id = ? ORDER BY i.id`,
     [lote.id]
   );
@@ -194,16 +281,16 @@ export function previsualizarCartera(fechaCorte = hoy()) {
 }
 
 /**
- * Emite la cartera y la deja registrada.
+ * Emite la cartera y la deja registrada, en 'borrador' hasta que se envia.
  *
- * Queda en 'borrador': recien cuando se marca como enviada cuenta para los
- * retiros, porque solo se puede retirar lo que efectivamente se entrego.
+ * Van todos los clientes con contrato, deban o no: el que esta al dia va sin
+ * cargos, y el moroso lo detecta la cobranza.
  */
 export function emitirLote(fechaCorte = hoy()) {
   const idExterno = proponerIdDeLote(fechaCorte);
   const cartera = construirCartera({ fechaCorte, idExterno });
   if (!cartera.deudas.length) {
-    throw Object.assign(new Error('No hay nada que cobrar a esa fecha'), { status: 400 });
+    throw error('No hay contratos que informar a esa fecha');
   }
   const batchId = run(
     'INSERT INTO collection_batches (id_externo, fecha_corte, estado, cartera) VALUES (?, ?, ?, ?)',
@@ -237,11 +324,6 @@ export function carteraDelLote(id) {
   return cartera;
 }
 
-/** A quien se le entrega la cartera. Sin URL o sin clave, se descarga y se entrega a mano. */
-export function cobranza() {
-  return { agencia: COBRANZA.agencia_nombre, configurada: Boolean(COBRANZA.url && COBRANZA.clave) };
-}
-
 /**
  * Le entrega el lote a la agencia (contrato Cartera v1) y guarda su respuesta,
  * contrato por contrato.
@@ -252,34 +334,22 @@ export function cobranza() {
  * el mismo numero, y la agencia la rechazaria.
  */
 export async function enviarLote(id) {
-  if (!cobranza().configurada) {
-    throw Object.assign(new Error('No hay una agencia configurada: la cartera se descarga y se entrega a mano'),
-      { status: 409 });
+  const agencia = conexion();
+  if (!agencia) {
+    throw error('No hay una agencia conectada: conéctala en Cobranza, o descarga la cartera y entrégala a mano', 409);
   }
   const lote = verLote(id);
   if (lote.estado !== 'borrador') {
-    throw Object.assign(new Error('Ese lote ya se envió'), { status: 409 });
+    throw error('Ese lote ya se envió', 409);
   }
-  const agencia = COBRANZA.agencia_nombre;
-  let respuesta;
+  let cuerpo;
   try {
-    respuesta = await fetch(`${COBRANZA.url.replace(/\/+$/, '')}/api/v1/carteras`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${COBRANZA.clave}` },
-      body: JSON.stringify(carteraDelLote(id)),
-      signal: AbortSignal.timeout(15000),
-    });
-  } catch {
-    throw Object.assign(new Error(`${agencia} no respondió. El lote sigue en borrador: puedes reintentar.`),
-      { status: 502 });
-  }
-  const cuerpo = await respuesta.json().catch(() => null);
-  if (!respuesta.ok || !cuerpo) {
-    const motivo = cuerpo?.error?.mensaje || `respondió ${respuesta.status}`;
-    throw Object.assign(new Error(`${agencia} no recibió el lote: ${motivo}`), { status: 502 });
+    cuerpo = await llamarALaAgencia(agencia, '/api/v1/carteras', { method: 'POST', cuerpo: carteraDelLote(id) });
+  } catch (fallo) {
+    throw error(`${fallo.message}. El lote sigue en borrador: puedes reintentar.`, 502);
   }
 
-  const estado = cuerpo.aceptadas === cuerpo.recibidas ? 'aceptado' : cuerpo.aceptadas === 0 ? 'rechazado' : 'enviado';
+  const estado = cuerpo.aceptadas === cuerpo.recibidas ? 'aceptado' : cuerpo.aceptadas === 0 ? 'rechazado' : 'parcial';
   run(
     'UPDATE collection_batches SET estado = ?, enviado_en = ?, respuesta = ? WHERE id = ?',
     [estado, new Date().toISOString(), JSON.stringify(cuerpo), lote.id]
@@ -362,7 +432,7 @@ function aplicarPagoExterno(evento) {
     const abono = Math.min(cargo.saldo, porRepartir);
     run(
       `INSERT INTO charge_payments (charge_id, monto, medio, pagado_en, referencia)
-       VALUES (?, ?, 'databridge', ?, ?)`,
+       VALUES (?, ?, 'cobranza', ?, ?)`,
       [cargo.id, abono, (datos.pagado_en || '').slice(0, 10) || hoy(),
        `${datos.pago_id || evento.id}-${cargo.id}`]
     );

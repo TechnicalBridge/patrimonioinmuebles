@@ -1,18 +1,21 @@
-// La API de arriendos por HTTP, con el servidor de verdad levantado sobre una
-// base temporal: cargos del mes, pagos en oficina, el lote para la cobranza y
-// los eventos firmados que vuelven con los pagos.
+// La API por HTTP, con el servidor de verdad levantado sobre una base temporal:
+// el login con sesiones en la base, clientes y contratos, cargos del mes, pagos
+// en oficina, el lote para la cobranza y los avisos firmados que vuelven con
+// los pagos. Una agencia falsa atiende la conexion.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 
-const SECRETO = 'secreto-de-prueba';
+const SECRETO = 'whsec_de_la_agencia';
 const PUERTO = 3900 + Math.floor(Math.random() * 90);
 const B = `http://localhost:${PUERTO}/api`;
 let servidor;
+let agencia;
 let H = {};
 
 async function j(ruta, opts = {}) {
@@ -21,25 +24,87 @@ async function j(ruta, opts = {}) {
   try { return { status: r.status, body: JSON.parse(texto) }; } catch { return { status: r.status, body: texto }; }
 }
 const post = (ruta, body, headers) => j(ruta, { method: 'POST', body: typeof body === 'string' ? body : JSON.stringify(body), headers });
+const put = (ruta, body) => j(ruta, { method: 'PUT', body: JSON.stringify(body) });
 const firmar = (cuerpo, marca = Math.floor(Date.now() / 1000), secreto = SECRETO) => ({
   'X-Timestamp': String(marca),
   'X-Firma': 'v1=' + crypto.createHmac('sha256', secreto).update(`${marca}.${cuerpo}`).digest('hex'),
 });
+const entrar = (correo = 'admin@patrimonioinmuebles.cl', clave = 'patrimonio') =>
+  j('/admin/login', { method: 'POST', body: JSON.stringify({ correo, clave }), headers: { Authorization: '' } });
+
+/** La primera vez del mes: el dia 1 de hace `meses` meses, como 2026-07-01. */
+function inicioDeHace(meses) {
+  const d = new Date();
+  d.setUTCDate(1);
+  d.setUTCMonth(d.getUTCMonth() - meses);
+  return d.toISOString().slice(0, 10);
+}
 
 before(async () => {
+  //  La agencia: solo lo que hace falta para conectarse.
+  agencia = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    if (req.url === '/api/v1/cuenta') {
+      res.end(JSON.stringify({ rut: '76418902-7', nombre: 'Patrimonio Inmuebles', tipo: 'acreedor',
+        receptor: { rut: '77305118-6', nombre: 'Agencia de prueba' } }));
+    } else {
+      res.end(JSON.stringify({ url: 'x', eventos: 'todos', secreto: SECRETO }));
+    }
+  });
+  await new Promise((listo) => agencia.listen(0, '127.0.0.1', listo));
+
   const base = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'patrimonio-api-')), 'prueba.db');
   servidor = spawn(process.execPath, ['index.js'], {
     cwd: path.join(import.meta.dirname, '..'),
-    env: { ...process.env, PORT: String(PUERTO), EVENTOS_SECRET: SECRETO, PATRIMONIO_DB: base },
+    env: { ...process.env, PORT: String(PUERTO), PATRIMONIO_DB: base, ADMIN_CORREO: '', ADMIN_PASSWORD: '' },
   });
   await new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error('el servidor no arranco')), 20000);
     servidor.stdout.on('data', (d) => { if (String(d).includes('API en')) { clearTimeout(t); resolve(); } });
   });
-  H = { Authorization: `Bearer ${(await post('/admin/login', { password: 'patrimonio' })).body.token}` };
+  H = { Authorization: `Bearer ${(await entrar()).body.token}` };
+  const conectado = await post('/admin/cobranza/conexion', {
+    url: `http://127.0.0.1:${agencia.address().port}`, clave: 'apx_prueba', url_avisos: `${B}/eventos`,
+  });
+  assert.equal(conectado.status, 200, JSON.stringify(conectado.body));
 });
 
-after(() => servidor?.kill());
+after(() => {
+  servidor?.kill();
+  agencia?.close();
+});
+
+// ---------------------------------------------------------------------------
+//  Sesiones
+// ---------------------------------------------------------------------------
+
+test('se entra con correo y clave, y la clave mala no dice si el correo existe', async () => {
+  const bien = await entrar();
+  assert.equal(bien.status, 200);
+  assert.equal(bien.body.usuario.correo, 'admin@patrimonioinmuebles.cl');
+  const claveMala = await entrar('admin@patrimonioinmuebles.cl', 'otra');
+  const correoMalo = await entrar('nadie@patrimonioinmuebles.cl', 'patrimonio');
+  assert.equal(claveMala.status, 401);
+  assert.equal(correoMalo.status, 401);
+  assert.equal(claveMala.body.error, correoMalo.body.error);
+});
+
+test('cerrar sesion la deja sin efecto al tiro', async () => {
+  const token = (await entrar()).body.token;
+  const conSesion = { Authorization: `Bearer ${token}` };
+  assert.equal((await j('/admin/yo', { headers: conSesion })).status, 200);
+  assert.equal((await j('/admin/logout', { method: 'POST', headers: conSesion })).status, 200);
+  assert.equal((await j('/admin/yo', { headers: conSesion })).status, 401);
+});
+
+test('sin sesion el panel no responde', async () => {
+  assert.equal((await j('/admin/clients', { headers: { Authorization: '' } })).status, 401);
+  assert.equal((await j('/admin/clients', { headers: { Authorization: 'Bearer inventado' } })).status, 401);
+});
+
+// ---------------------------------------------------------------------------
+//  Arriendos de la demo
+// ---------------------------------------------------------------------------
 
 test('contratos y morosos al corte', async () => {
   const contratos = (await j('/admin/arriendos/contratos')).body;
@@ -75,10 +140,12 @@ test('un pago en la oficina deja el saldo, no el monto original, en la cartera',
   assert.equal(cartera.deudas.find(d => d.id_externo === 'CTR-2026-031').cargos[0].monto, 210000);
 });
 
-test('el lote se emite, se descarga y se marca enviado una sola vez', async () => {
+test('el lote lleva a todos los clientes con contrato, y se descarga', async () => {
   const emitido = (await post('/admin/arriendos/lotes', { corte: '2026-09-18' })).body;
   assert.equal(emitido.lote.estado, 'borrador');
-  assert.equal(emitido.lote.items.length, 8);
+  assert.equal(emitido.lote.items.length, 10, 'los que deben y los que estan al dia');
+  assert.equal(emitido.cartera.deudas.find(d => d.id_externo === 'CTR-2026-008').cargos.length, 0,
+    'Josefa esta al dia: va sin cargos');
   assert.equal(emitido.lote.id_externo, 'PAT-2026-09-18-01');
   const archivo = await fetch(`${B}/admin/arriendos/lotes/${emitido.lote.id}/archivo`, { headers: H });
   assert.match(archivo.headers.get('content-disposition') || '', /PAT-2026-09-18-01\.json/);
@@ -87,7 +154,7 @@ test('el lote se emite, se descarga y se marca enviado una sola vez', async () =
   assert.equal((await post(`/admin/arriendos/lotes/${emitido.lote.id}/enviado`, {})).status, 409);
 });
 
-test('los eventos de pago: firma, antirrepeticion y deduplicacion', async () => {
+test('los avisos de pago: firma con el secreto de la agencia, antirrepeticion y deduplicacion', async () => {
   const cuerpo = JSON.stringify({
     id: 'evt_prueba_1', tipo: 'pago.confirmado', version: '1',
     ocurrido_en: '2026-09-20T14:03:11-03:00', acreedor_rut: '76418902-7',
@@ -105,9 +172,74 @@ test('los eventos de pago: firma, antirrepeticion y deduplicacion', async () => 
   assert.equal((await post('/eventos', cuerpo, firmar(cuerpo))).body.repetido, true);
 
   const morosos = (await j('/admin/arriendos/morosos?corte=2026-09-18')).body;
-  assert.ok(!morosos.some(m => m.codigo === 'CTR-2026-031'), 'el contrato pagado por evento sale de la cartera');
+  assert.ok(!morosos.some(m => m.codigo === 'CTR-2026-031'), 'el contrato pagado por aviso sale de los morosos');
   assert.equal(morosos.length, 6);
 });
+
+// ---------------------------------------------------------------------------
+//  Un cliente nuevo, que se vuelve moroso
+// ---------------------------------------------------------------------------
+
+test('un interesado se crea sin RUT, pero no puede firmar hasta tenerlo', async () => {
+  const cliente = await post('/admin/clients', { nombre: 'Marta', apellido: 'Lagos', correo: 'marta@correo.cl' });
+  assert.equal(cliente.status, 200, JSON.stringify(cliente.body));
+  assert.equal(cliente.body.etapa, 'interesado');
+  const propiedad = (await post('/admin/properties',
+    { titulo: 'Depto para Marta', tipo: 'departamento', operacion: 'arriendo', precio: 450000 })).body;
+
+  const sinRut = await post('/admin/arriendos/contratos', { client_id: cliente.body.id, property_id: propiedad.id,
+    renta_monto: 450000, fecha_inicio: inicioDeHace(3) });
+  assert.equal(sinRut.status, 400);
+  assert.match(sinRut.body.error, /no tiene RUT/);
+
+  assert.equal((await put(`/admin/clients/${cliente.body.id}`, { rut: '16.482.337-1' })).status, 400,
+    'un RUT con el digito malo no entra');
+  const conRut = await put(`/admin/clients/${cliente.body.id}`, { rut: '19.876.543-0' });
+  assert.equal(conRut.status, 200, JSON.stringify(conRut.body));
+  assert.equal(conRut.body.rut, '19876543-0');
+});
+
+test('un contrato que empezo hace tres meses nace con sus arriendos, y es un moroso de verdad', async () => {
+  const marta = (await j('/admin/clients')).body.find((c) => c.correo === 'marta@correo.cl');
+  const propiedad = (await j('/properties?all=1')).body.find((p) => p.titulo === 'Depto para Marta');
+
+  const contrato = await post('/admin/arriendos/contratos', { client_id: marta.id, property_id: propiedad.id,
+    renta_monto: 450000, dia_vencimiento: 5, fecha_inicio: inicioDeHace(3) });
+  assert.equal(contrato.status, 200, JSON.stringify(contrato.body));
+  assert.equal(contrato.body.cargos_emitidos, 4, 'tres meses atras y el actual');
+  assert.match(contrato.body.codigo, /^CTR-\d{4}-\d{3}$/);
+
+  const hoy = new Date().toISOString().slice(0, 10);
+  const moroso = (await j(`/admin/arriendos/morosos?corte=${hoy}`)).body.find((m) => m.codigo === contrato.body.codigo);
+  assert.ok(moroso, 'Marta aparece en los morosos');
+  assert.ok(moroso.cargos.length >= 3);
+  const cartera = (await j(`/admin/arriendos/cartera?corte=${hoy}`)).body;
+  const suya = cartera.deudas.find((d) => d.id_externo === contrato.body.codigo);
+  assert.equal(suya.deudor.rut, '19876543-0');
+  assert.equal(suya.deudor.nombre, 'Marta Lagos');
+
+  const otra = await post('/admin/arriendos/contratos', { client_id: marta.id, property_id: propiedad.id,
+    renta_monto: 1, fecha_inicio: hoy });
+  assert.equal(otra.status, 409, 'la propiedad ya esta arrendada');
+
+  const ficha = (await j(`/admin/clients/${marta.id}`)).body;
+  assert.equal(ficha.etapa, 'arrendatario');
+  assert.equal(ficha.contratos.length, 1);
+});
+
+test('terminar un contrato deja la propiedad disponible y conserva la deuda', async () => {
+  const marta = (await j('/admin/clients')).body.find((c) => c.correo === 'marta@correo.cl');
+  const contrato = (await j(`/admin/clients/${marta.id}`)).body.contratos[0];
+  const terminado = await post(`/admin/arriendos/contratos/${contrato.id}/termino`, {});
+  assert.equal(terminado.body.estado, 'terminado');
+  const propiedad = (await j('/properties?all=1')).body.find((p) => p.titulo === 'Depto para Marta');
+  assert.equal(propiedad.estatus, 'disponible');
+  assert.ok((await j(`/admin/clients/${marta.id}`)).body.contratos[0].deuda > 0);
+});
+
+// ---------------------------------------------------------------------------
+//  Errores
+// ---------------------------------------------------------------------------
 
 test('dos propiedades con el mismo titulo no revientan: la segunda recibe otro slug', async () => {
   const casa = { titulo: 'Depto en Ñuñoa', tipo: 'departamento', operacion: 'arriendo', precio: 520000 };

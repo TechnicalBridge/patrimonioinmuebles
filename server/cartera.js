@@ -1,13 +1,12 @@
-// Arma la cartera morosa en el formato Cartera v1.
+// Arma la cartera en el formato Cartera v1.
 //
-// Es el unico punto del proyecto que sabe como se habla con afuera. El resto
-// del sistema trabaja con arrendatarios, contratos y cargos; aca eso se traduce
-// a deudas, deudores y cargos del contrato de integracion
+// El resto del sistema trabaja con clientes, contratos y cargos; aca eso se
+// traduce a deudas, deudores y cargos del contrato de integracion
 // (TB_web/docs/integracion/README.md §6).
 //
-// No manda nada: devuelve el objeto. Quien lo envie —o lo descargue como
-// archivo— decide despues. Asi la cobranza se puede usar con APOFYX, contra
-// DataBridge directo, o sin nadie.
+// No manda nada: devuelve el objeto. Quien lo envie (cobranza.js) o lo
+// descargue como archivo decide despues. Asi sirve con cualquier agencia que
+// hable el contrato, contra una plataforma de pagos directo, o sin nadie.
 
 import { all, get } from './db.js';
 import { EMPRESA } from './empresa.js';
@@ -36,7 +35,7 @@ function deudor(contrato) {
   const datos = {
     rut: contrato.rut,
     tipo: contrato.tipo,
-    nombre: contrato.nombre,
+    nombre: [contrato.nombre, contrato.apellido].filter(Boolean).join(' '),
   };
   if (contrato.correo) datos.correo = contrato.correo;
   if (contrato.telefono) datos.telefono = contrato.telefono;
@@ -44,37 +43,34 @@ function deudor(contrato) {
 }
 
 /**
- * La cartera a una fecha de corte.
+ * La cartera a una fecha de corte: todos los clientes con contrato.
  *
- * Incluye dos cosas:
- *   - los contratos con cargos vencidos impagos, como deudas;
- *   - los que ya se habian entregado y hoy no deben nada, como retiros.
+ * Patrimonio no decide quien es moroso: entrega a cada cliente con lo que debe
+ * a esa fecha, y el que esta al dia va con `cargos: []`. Lo detecta la
+ * cobranza, que es la que sabe desde cuanta mora cobra. Asi tampoco hace falta
+ * llevar la cuenta de a quien retirar: el que vino a pagar a la oficina sale al
+ * dia, y la cobranza deja de cobrarle.
  *
- * Lo segundo es lo que evita que se siga cobrando a alguien que vino a pagar a
- * la oficina. Sin eso, el arrendatario recibiria mensajes de cobranza por una
- * deuda que ya pago, que es exactamente lo que destruye la confianza.
+ * Van los contratos vigentes y los terminados que todavia deben. Uno terminado
+ * que ya pago va una vez mas, para que la cobranza lo cierre, y despues ya no.
  */
 export function construirCartera({ fechaCorte, idExterno }) {
   const contratos = all(
-    `SELECT l.id, l.codigo, l.concepto, l.moneda,
-            t.rut, t.tipo, t.nombre, t.correo, t.telefono,
+    `SELECT l.id, l.codigo, l.concepto, l.moneda, l.estado,
+            c.rut, c.tipo, c.nombre, c.apellido, c.correo, c.telefono,
             p.direccion, p.comuna
        FROM leases l
-       JOIN tenants t ON t.id = l.tenant_id
+       JOIN clients c ON c.id = l.client_id
        JOIN properties p ON p.id = l.property_id
-      WHERE l.estado = 'vigente'
-      ORDER BY l.id`
+      WHERE l.fecha_inicio < ?
+      ORDER BY l.id`,
+    [fechaCorte]
   );
 
   const deudas = [];
-  const alDia = [];
-
   for (const contrato of contratos) {
     const cargos = cargosVencidos(contrato.id, fechaCorte);
-    if (cargos.length === 0) {
-      alDia.push(contrato);
-      continue;
-    }
+    if (contrato.estado === 'terminado' && !cargos.length && !seEntregoDebiendo(contrato.id)) continue;
     deudas.push({
       id_externo: contrato.codigo,
       deudor: deudor(contrato),
@@ -93,32 +89,6 @@ export function construirCartera({ fechaCorte, idExterno }) {
     });
   }
 
-  // Un retiro solo tiene sentido si antes se entrego: se busca entre lo que ya
-  // se mando y no se ha retirado todavia.
-  for (const contrato of alDia) {
-    const entregado = get(
-      `SELECT 1
-         FROM collection_batch_items i
-         JOIN collection_batches b ON b.id = i.batch_id
-        WHERE i.lease_id = ? AND i.accion = 'registrar' AND b.estado <> 'borrador'
-          AND COALESCE(i.resultado, '') <> 'rechazada'
-          AND NOT EXISTS (
-            SELECT 1 FROM collection_batch_items r
-              JOIN collection_batches rb ON rb.id = r.batch_id
-             WHERE r.lease_id = i.lease_id AND r.accion = 'retirar'
-               AND rb.fecha_corte > b.fecha_corte
-          )`,
-      [contrato.id]
-    );
-    if (entregado) {
-      deudas.push({
-        id_externo: contrato.codigo,
-        accion: 'retirar',
-        motivo_retiro: 'pago_directo',
-      });
-    }
-  }
-
   return {
     version: '1.0',
     lote: {
@@ -133,6 +103,19 @@ export function construirCartera({ fechaCorte, idExterno }) {
     },
     deudas,
   };
+}
+
+/** Si la ultima entrega de este contrato lo informo debiendo: la cobranza todavia lo tiene abierto. */
+function seEntregoDebiendo(leaseId) {
+  const ultima = get(
+    `SELECT i.monto_enviado
+       FROM collection_batch_items i
+       JOIN collection_batches b ON b.id = i.batch_id
+      WHERE i.lease_id = ? AND b.estado <> 'borrador'
+      ORDER BY b.fecha_corte DESC, b.id DESC LIMIT 1`,
+    [leaseId]
+  );
+  return Boolean(ultima && ultima.monto_enviado > 0);
 }
 
 /** Nombre sugerido para el lote del dia: PAT-2026-09-18-01, -02, ... */
