@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { seedIfEmpty, sembrarAdministrador } from './seed.js';
+import { cifrar } from './cifrado.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // PATRIMONIO_DB permite otra base: las pruebas usan un archivo temporal para
@@ -521,8 +522,47 @@ const ESQUEMA_V2 = `
 const MIGRACIONES = [
   [1, esquemaV1],
   [2, aV2],
+  [3, aV3],
 ];
 export const VERSION = MIGRACIONES.at(-1)[0];
+
+// ===========================================================================
+//  Version 3
+//    - la disputa: el deudor dijo que la deuda no corresponde, y la agencia
+//      la revisa. El contrato muestra en que va (abierta, rechazada, aceptada);
+//    - el limite de intentos del login, en la base: sobrevive a un reinicio;
+//    - la clave de la agencia y el secreto de sus avisos, cifrados.
+//  Solo agrega columnas y una tabla: no hace falta reconstruir nada.
+// ===========================================================================
+
+function aV3() {
+  db.exec('BEGIN');
+  try {
+    db.exec(`
+    ALTER TABLE leases ADD COLUMN disputa_estado TEXT
+      CHECK (disputa_estado IN ('abierta', 'rechazada', 'aceptada'));
+    ALTER TABLE leases ADD COLUMN disputa_motivo TEXT;
+    ALTER TABLE leases ADD COLUMN disputa_desde TEXT;
+
+    -- Una fila por IP que se equivoco, por su huella: la IP no se guarda.
+    CREATE TABLE login_intentos (
+      ip_huella TEXT PRIMARY KEY,
+      fallos INTEGER NOT NULL DEFAULT 0 CHECK (fallos >= 0),
+      bloqueada_hasta TEXT
+    );
+  `);
+    const conexion = db.exec('SELECT clave, secreto_eventos FROM agency_connection WHERE id = 1')[0];
+    if (conexion) {
+      const [clave, secreto] = conexion.values[0];
+      db.run('UPDATE agency_connection SET clave = ?, secreto_eventos = ? WHERE id = 1',
+        [cifrar(clave), cifrar(secreto)]);
+    }
+    db.exec('COMMIT');
+  } catch (error) {
+    try { db.exec('ROLLBACK'); } catch { /* ya no habia transaccion */ }
+    throw error;
+  }
+}
 
 export function versionDeLaBase() {
   return db.exec('PRAGMA user_version')[0].values[0][0];

@@ -41,7 +41,8 @@ export function verCliente(id) {
   );
   cliente.contratos = all(
     `SELECT l.id, l.codigo, l.concepto, l.renta_monto, l.moneda, l.estado, l.fecha_inicio, l.fecha_termino,
-            l.dia_vencimiento, p.titulo AS propiedad, p.direccion, p.comuna,
+            l.dia_vencimiento, l.disputa_estado, l.disputa_motivo, l.disputa_desde,
+            p.titulo AS propiedad, p.direccion, p.comuna,
             COALESCE(d.deuda, 0) AS deuda, COALESCE(d.cargos_impagos, 0) AS cargos_impagos
        FROM leases l
        JOIN properties p ON p.id = l.property_id

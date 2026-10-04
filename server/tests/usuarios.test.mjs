@@ -46,6 +46,20 @@ test('cinco claves malas bloquean esa IP un rato, y solo esa', () => {
   assert.ok(entrar({ correo: 'jefa@patrimonio.cl', clave: 'una-clave-larga' }, 'ip-4').token);
 });
 
+test('el bloqueo queda en la base, sin la IP a la vista, y un reinicio no lo levanta', () => {
+  const filas = all('SELECT * FROM login_intentos WHERE bloqueada_hasta IS NOT NULL');
+  assert.equal(filas.length, 1);
+  assert.ok(!JSON.stringify(filas).includes('ip-3'));
+  assert.ok(filas[0].bloqueada_hasta > new Date().toISOString());
+});
+
+test('un bloqueo vencido deja entrar, y entrar borra los fallos', () => {
+  run("UPDATE login_intentos SET bloqueada_hasta = '2000-01-01T00:00:00.000Z'");
+  assert.throws(() => entrar({ correo: 'jefa@patrimonio.cl', clave: 'mala' }, 'ip-3'), { status: 401 });
+  assert.ok(entrar({ correo: 'jefa@patrimonio.cl', clave: 'una-clave-larga' }, 'ip-3').token);
+  assert.equal(all('SELECT * FROM login_intentos').length, 0);
+});
+
 test('un usuario desactivado no entra, y sus sesiones dejan de servir', () => {
   const token = entrar({ correo: 'jefa@patrimonio.cl', clave: 'una-clave-larga' }, 'ip-5').token;
   run('UPDATE users SET activo = 0');

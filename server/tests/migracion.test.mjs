@@ -1,5 +1,5 @@
 // Una base que ya existia, con el esquema de la version 1 y sus datos, pasa a
-// la version 2 sin perder nada. Es lo que le pasa al volumen de Docker de
+// la ultima version sin perder nada. Es lo que le pasa al volumen de Docker de
 // quien ya tenia Patrimonio andando.
 import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
@@ -8,7 +8,8 @@ import os from 'node:os';
 import path from 'node:path';
 
 process.env.PATRIMONIO_DB = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'patrimonio-migracion-')), 'v1.db');
-const { initDb, migrar, all, get, run, versionDeLaBase } = await import('../db.js');
+const { initDb, migrar, all, get, run, versionDeLaBase, VERSION } = await import('../db.js');
+const { conexion } = await import('../cobranza.js');
 
 before(async () => {
   //  Una base en la version 1, con un interesado, un arrendatario con su
@@ -26,11 +27,16 @@ before(async () => {
   run(`INSERT INTO collection_batch_items (batch_id, lease_id, monto_enviado, moneda) VALUES (1, 1, 500000, 'CLP')`);
   assert.equal(versionDeLaBase(), 1);
 
+  //  En la version 2 la conexion con la agencia se guardaba en claro.
+  migrar(2);
+  run(`INSERT INTO agency_connection (id, nombre, url, clave, url_avisos, secreto_eventos)
+       VALUES (1, 'Agencia', 'http://agencia', 'ak_en_claro', 'http://patrimonio/api/eventos', 'whsec_en_claro')`);
+
   migrar();
 });
 
-test('queda en la version 2, sin tabla de arrendatarios', () => {
-  assert.equal(versionDeLaBase(), 2);
+test('queda en la ultima version, sin tabla de arrendatarios', () => {
+  assert.equal(versionDeLaBase(), VERSION);
   assert.ok(!all("SELECT name FROM sqlite_master WHERE type='table'").some((t) => t.name === 'tenants'));
   assert.equal(get('PRAGMA foreign_keys').foreign_keys, 1);
 });
@@ -56,8 +62,24 @@ test('el pago de la plataforma queda como de la cobranza, y el lote se conserva'
   assert.equal(get('SELECT lease_id FROM collection_batch_items').lease_id, 1);
 });
 
+test('la clave y el secreto de la agencia quedan cifrados, y se leen igual', () => {
+  const guardada = get('SELECT clave, secreto_eventos FROM agency_connection');
+  assert.match(guardada.clave, /^enc:v1:/);
+  assert.match(guardada.secreto_eventos, /^enc:v1:/);
+  assert.equal(conexion().clave, 'ak_en_claro');
+  assert.equal(conexion().secreto_eventos, 'whsec_en_claro');
+});
+
+test('los contratos de antes no estan en disputa', () => {
+  const contrato = get("SELECT disputa_estado, disputa_motivo FROM leases WHERE codigo = 'CTR-1'");
+  assert.equal(contrato.disputa_estado, null);
+  assert.equal(contrato.disputa_motivo, null);
+});
+
 test('migrar otra vez no hace nada', () => {
   migrar();
-  assert.equal(versionDeLaBase(), 2);
+  assert.equal(versionDeLaBase(), VERSION);
+  assert.match(get('SELECT clave FROM agency_connection').clave, /^enc:v1:/, 'no se cifra dos veces');
+  assert.equal(conexion().clave, 'ak_en_claro');
   assert.equal(get('SELECT COUNT(*) AS n FROM clients').n, 2);
 });

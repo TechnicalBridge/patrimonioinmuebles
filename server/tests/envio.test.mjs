@@ -38,7 +38,7 @@ function responder(cartera) {
     if (!d.cargos.length) return { id_externo: d.id_externo, resultado: 'al_dia' };
     if (d.id_externo === 'CTR-2026-031') {
       return { id_externo: d.id_externo, resultado: 'rechazada',
-        errores: [{ campo: 'cargos', codigo: 'bajo_umbral_mora', mensaje: 'Tiene 1 mes impago' }] };
+        errores: [{ campo: 'cargos', codigo: 'bajo_umbral_mora', mensaje: 'Tiene 13 dias de mora' }] };
     }
     return { id_externo: d.id_externo, resultado: 'registrada', mora_dias: 44, tramo: '31-90' };
   });
@@ -91,7 +91,7 @@ after(() => {
 });
 
 test('sin agencia conectada, el lote no se envia y los avisos estan apagados', async () => {
-  assert.deepEqual((await j('/admin/cobranza')).body, { conectada: false });
+  assert.deepEqual((await j('/admin/cobranza')).body, { conectada: false, en_docker: false });
   const emitido = (await post('/admin/arriendos/lotes', { corte: '2026-08-25' })).body;
   const envio = await post(`/admin/arriendos/lotes/${emitido.lote.id}/envio`, {});
   assert.equal(envio.status, 409);
@@ -105,7 +105,7 @@ test('una clave de otra empresa no conecta, y una mala tampoco', async () => {
   assert.match(ajena.body.error, /es de Otra Empresa/);
   const mala = await conectar('apx_inventada');
   assert.equal(mala.status, 401);
-  assert.deepEqual((await j('/admin/cobranza')).body, { conectada: false });
+  assert.deepEqual((await j('/admin/cobranza')).body, { conectada: false, en_docker: false });
 });
 
 test('conectar comprueba la clave, se suscribe a los avisos y toma el nombre de la agencia', async () => {
@@ -130,7 +130,7 @@ test('enviar un lote se lo entrega a la agencia y guarda su respuesta contrato p
   assert.deepEqual(pedido.cuerpo, emitido.cartera, 'va la cartera tal como se emitio');
   assert.equal(enviado.body.estado, 'parcial', 'con una rechazada queda como parcial');
   assert.deepEqual([enviado.body.respuesta.aceptadas, enviado.body.respuesta.recibidas], [9, 10]);
-  assert.deepEqual(enviado.body.respuesta.rechazos, [{ id_externo: 'CTR-2026-031', motivo: 'Tiene 1 mes impago' }]);
+  assert.deepEqual(enviado.body.respuesta.rechazos, [{ id_externo: 'CTR-2026-031', motivo: 'Tiene 13 dias de mora' }]);
   const resultado = Object.fromEntries(enviado.body.items.map((i) => [i.codigo, i.resultado]));
   assert.equal(resultado['CTR-2026-031'], 'rechazada');
   assert.equal(resultado['CTR-2025-014'], 'registrada');
@@ -179,6 +179,19 @@ test('el que pago en la oficina sigue en la cartera, al dia y sin cargos', async
 });
 
 test('desconectar apaga el envio y los avisos', async () => {
-  assert.deepEqual((await j('/admin/cobranza/conexion', { method: 'DELETE' })).body, { conectada: false });
+  assert.deepEqual((await j('/admin/cobranza/conexion', { method: 'DELETE' })).body, { conectada: false, en_docker: false });
   assert.equal((await post('/eventos', '{}')).status, 503);
+});
+
+test('si la agencia no responde en localhost, el error dice que poner', async () => {
+  const r = await post('/admin/cobranza/conexion', { url: 'http://localhost:9', clave: 'apx_prueba', url_avisos: `${B}/eventos` });
+  assert.equal(r.status, 502);
+  assert.match(r.body.error, /no respondió en http:\/\/localhost:9/);
+  assert.match(r.body.error, /host\.docker\.internal:9/);
+});
+
+test('otra pagina no recibe permiso de CORS para usar la API', async () => {
+  const r = await fetch(`${B}/properties`, { headers: { Origin: 'https://otra-pagina.example' } });
+  assert.equal(r.status, 200);
+  assert.equal(r.headers.get('access-control-allow-origin'), null);
 });

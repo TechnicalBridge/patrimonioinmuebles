@@ -176,6 +176,40 @@ test('los avisos de pago: firma con el secreto de la agencia, antirrepeticion y 
   assert.equal(morosos.length, 6);
 });
 
+test('la disputa de un arrendatario llega por aviso, y el contrato muestra en que va', async () => {
+  const aviso = async (id, tipo, datos) => {
+    const cuerpo = JSON.stringify({ id, tipo, version: '1', ocurrido_en: '2026-09-21T10:00:00-03:00',
+      acreedor_rut: '76418902-7', datos });
+    const r = await post('/eventos', cuerpo, firmar(cuerpo));
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    return r.body;
+  };
+  const contrato = async (codigo) =>
+    (await j('/admin/arriendos/contratos')).body.find((c) => c.codigo === codigo);
+
+  await aviso('evt_disputa_1', 'deuda.disputada', { deuda_id_externo: 'CTR-2025-014', motivo: 'ya_pagada' });
+  let c = await contrato('CTR-2025-014');
+  assert.equal(c.disputa_estado, 'abierta');
+  assert.equal(c.disputa_motivo, 'ya_pagada');
+  assert.equal(c.disputa_desde, '2026-09-21');
+  assert.ok(c.deuda > 0, 'la deuda no cambia: la revisa la agencia');
+
+  await aviso('evt_disputa_2', 'deuda.reanudada',
+    { deuda_id_externo: 'CTR-2025-014', motivo: 'disputa_rechazada', con_convenio: false });
+  c = await contrato('CTR-2025-014');
+  assert.equal(c.disputa_estado, 'rechazada');
+  assert.equal(c.disputa_motivo, 'ya_pagada', 'queda el motivo que dio el arrendatario');
+
+  await aviso('evt_disputa_3', 'deuda.disputada', { deuda_id_externo: 'CTR-2026-008', motivo: 'no_reconoce' });
+  await aviso('evt_disputa_4', 'deuda.retirada',
+    { deuda_id_externo: 'CTR-2026-008', motivo: 'disputa_resuelta' });
+  assert.equal((await contrato('CTR-2026-008')).disputa_estado, 'aceptada');
+
+  //  Un retiro por otro motivo no toca la disputa.
+  await aviso('evt_disputa_5', 'deuda.retirada', { deuda_id_externo: 'CTR-2025-014', motivo: 'pago_directo' });
+  assert.equal((await contrato('CTR-2025-014')).disputa_estado, 'rechazada');
+});
+
 // ---------------------------------------------------------------------------
 //  Un cliente nuevo, que se vuelve moroso
 // ---------------------------------------------------------------------------

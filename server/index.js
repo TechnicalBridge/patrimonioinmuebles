@@ -38,7 +38,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3001);
 
 const app = express();
-app.use(cors());
+//  El sitio llama a la API desde su misma direccion (en desarrollo, por el
+//  proxy de Vite), y la agencia le habla de servidor a servidor: ninguno
+//  necesita CORS. Abrirlo a cualquier origen dejaba que otra pagina usara la
+//  API desde el navegador de quien tuviera una sesion. Si alguna vez hace
+//  falta, se nombran los origenes en CORS_ORIGENES, separados por coma.
+const ORIGENES = (process.env.CORS_ORIGENES || '').split(',').map((o) => o.trim()).filter(Boolean);
+app.use(cors({ origin: ORIGENES.length ? ORIGENES : false }));
 // Se guarda el cuerpo crudo porque la firma de los eventos se calcula sobre el
 // texto exacto que llego: volver a serializar el objeto cambia los espacios y
 // el orden, y la firma dejaria de calzar.

@@ -515,6 +515,23 @@ textarea {
   color: var(--muted);
 }
 
+/* En que va la disputa de un contrato (components/Disputa.jsx). */
+.disputa {
+  display: block;
+  width: fit-content;
+  margin-top: 0.3rem;
+  padding: 0.15rem 0.45rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+
+.disputa.abierta {
+  background: var(--gold-soft);
+  border-color: var(--gold);
+  color: var(--ink);
+}
+
 .count {
   margin-bottom: 1rem;
 }

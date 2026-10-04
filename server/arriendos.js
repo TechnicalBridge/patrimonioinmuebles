@@ -24,7 +24,7 @@ const error = (mensaje, status = 400) => Object.assign(new Error(mensaje), { sta
 export function listarContratos() {
   return all(`
     SELECT l.id, l.codigo, l.concepto, l.renta_monto, l.moneda, l.estado,
-           l.fecha_inicio, l.dia_vencimiento,
+           l.fecha_inicio, l.dia_vencimiento, l.disputa_estado, l.disputa_motivo, l.disputa_desde,
            c.id AS client_id, c.rut, c.nombre AS arrendatario, c.correo, c.telefono,
            p.direccion, p.comuna,
            COALESCE(d.deuda, 0) AS deuda,
@@ -40,7 +40,7 @@ export function listarContratos() {
 /** Contratos con al menos un cargo vencido e impago a la fecha de corte. */
 export function listarMorosos(fechaCorte = hoy()) {
   const contratos = all(
-    `SELECT l.id, l.codigo, l.concepto, l.moneda,
+    `SELECT l.id, l.codigo, l.concepto, l.moneda, l.disputa_estado,
             c.id AS client_id, c.rut, c.nombre AS arrendatario, c.correo, c.telefono,
             p.direccion, p.comuna
        FROM leases l
@@ -400,6 +400,14 @@ export function procesarEvento(evento) {
     // No hay nada que hacer: el saldo sale de los pagos, y el pago ya llego
     // en su propio evento. Se registra igual para dejar el rastro.
     resultado = 'anotado';
+  } else if (evento.tipo === 'deuda.disputada') {
+    resultado = marcarDisputa(evento, 'abierta');
+  } else if (evento.tipo === 'deuda.reanudada') {
+    resultado = marcarDisputa(evento, 'rechazada');
+  } else if (evento.tipo === 'deuda.retirada' && evento.datos?.motivo === 'disputa_resuelta') {
+    resultado = marcarDisputa(evento, 'aceptada');
+  } else if (evento.tipo === 'deuda.retirada') {
+    resultado = 'anotado';
   }
 
   run(
@@ -408,6 +416,26 @@ export function procesarEvento(evento) {
     [evento.id, evento.tipo, evento.ocurrido_en || null, JSON.stringify(evento), resultado]
   );
   return { repetido: false, resultado };
+}
+
+/**
+ * La disputa de un arrendatario: dijo que la deuda no corresponde (abierta),
+ * y la agencia la reviso. Rechazada: la deuda corresponde y se sigue
+ * cobrando. Aceptada: no correspondia, y la agencia la saco de su cobranza.
+ * Patrimonio no cambia ningun cargo: la deuda es suya, y revisar el contrato
+ * le toca a la corredora.
+ */
+function marcarDisputa(evento, estado) {
+  const datos = evento.datos || {};
+  const contrato = get('SELECT id FROM leases WHERE codigo = ?', [datos.deuda_id_externo]);
+  if (!contrato) return 'contrato desconocido';
+  if (estado === 'abierta') {
+    run(`UPDATE leases SET disputa_estado = 'abierta', disputa_motivo = ?, disputa_desde = ? WHERE id = ?`,
+      [datos.motivo || null, (evento.ocurrido_en || new Date().toISOString()).slice(0, 10), contrato.id]);
+    return 'en disputa';
+  }
+  run('UPDATE leases SET disputa_estado = ? WHERE id = ?', [estado, contrato.id]);
+  return estado === 'rechazada' ? 'disputa rechazada: se sigue cobrando' : 'disputa aceptada: salio de la cobranza';
 }
 
 function aplicarPagoExterno(evento) {

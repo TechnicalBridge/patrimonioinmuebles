@@ -13,6 +13,7 @@ import {
   marcarLoteEnviado,
   registrarPago,
 } from '../api.js';
+import Disputa from './Disputa.jsx';
 
 const hoy = () => new Date().toISOString().slice(0, 10);
 const mesActual = () => new Date().toISOString().slice(0, 7);
@@ -141,7 +142,10 @@ export default function ArriendosPanel() {
             )}
             {morosos.map((m) => (
               <tr key={m.codigo}>
-                <td>{m.codigo}</td>
+                <td>
+                  {m.codigo}
+                  <Disputa contrato={m} />
+                </td>
                 <td>{m.arrendatario}</td>
                 <td>{m.rut}</td>
                 <td>
@@ -378,7 +382,10 @@ export default function ArriendosPanel() {
                 <td>{formatPrice(c.renta_monto, c.moneda, 'arriendo')}</td>
                 <td>día {c.dia_vencimiento}</td>
                 <td>{c.deuda > 0 ? formatPrice(c.deuda, c.moneda) : '—'}</td>
-                <td>{c.estado}</td>
+                <td>
+                  {c.estado}
+                  <Disputa contrato={c} />
+                </td>
               </tr>
             ))}
           </tbody>

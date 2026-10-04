@@ -10,25 +10,26 @@ import { get, run } from './db.js';
 const HORAS_DE_SESION = 8;
 
 //  Freno contra quien prueba claves: 5 intentos fallidos por IP y queda
-//  bloqueada 10 minutos. En memoria a proposito: se pierde al reiniciar, y
-//  eso no le da ventaja a nadie.
+//  bloqueada 10 minutos. En la base (login_intentos), y no en memoria: un
+//  reinicio del servidor no le devuelve los intentos a nadie. La IP se guarda
+//  como huella.
 const INTENTOS = 5;
 const BLOQUEO_MS = 10 * 60 * 1000;
-const fallos = new Map();
 
 function bloqueada(ip) {
-  const f = fallos.get(ip);
-  return f && f.hasta > Date.now();
+  const f = get('SELECT bloqueada_hasta FROM login_intentos WHERE ip_huella = ?', [huellaDeToken(ip)]);
+  return Boolean(f?.bloqueada_hasta) && f.bloqueada_hasta > new Date().toISOString();
 }
 
 function anotarFallo(ip) {
-  const f = fallos.get(ip) || { n: 0, hasta: 0 };
-  f.n += 1;
-  if (f.n >= INTENTOS) {
-    f.hasta = Date.now() + BLOQUEO_MS;
-    f.n = 0;
-  }
-  fallos.set(ip, f);
+  const huella = huellaDeToken(ip);
+  const f = get('SELECT fallos FROM login_intentos WHERE ip_huella = ?', [huella]);
+  const n = (f?.fallos || 0) + 1;
+  const bloqueo = n >= INTENTOS ? new Date(Date.now() + BLOQUEO_MS).toISOString() : null;
+  run(`INSERT INTO login_intentos (ip_huella, fallos, bloqueada_hasta) VALUES (?, ?, ?)
+       ON CONFLICT (ip_huella) DO UPDATE SET fallos = excluded.fallos,
+         bloqueada_hasta = COALESCE(excluded.bloqueada_hasta, login_intentos.bloqueada_hasta)`,
+  [huella, bloqueo ? 0 : n, bloqueo]);
 }
 
 const error = (mensaje, status) => Object.assign(new Error(mensaje), { status });
@@ -43,7 +44,7 @@ export function entrar({ correo, clave }, ip = 'local') {
     //  se le dice a nadie que correos tienen cuenta.
     throw error('Correo o clave incorrectos', 401);
   }
-  fallos.delete(ip);
+  run('DELETE FROM login_intentos WHERE ip_huella = ?', [huellaDeToken(ip)]);
   const token = nuevoToken();
   const expira = new Date(Date.now() + HORAS_DE_SESION * 3600 * 1000).toISOString();
   run('INSERT INTO sessions (token_hash, user_id, expira_en) VALUES (?, ?, ?)',

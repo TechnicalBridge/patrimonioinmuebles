@@ -10,6 +10,7 @@ import {
   getProperties,
   terminarContrato,
 } from '../api.js';
+import Disputa from './Disputa.jsx';
 
 const hoy = () => new Date().toISOString().slice(0, 10);
 const VACIO = { tipo: 'persona', rut: '', nombre: '', apellido: '', correo: '', telefono: '' };
@@ -309,7 +310,10 @@ function FichaCliente({ cliente, avisoInicial, volver, recargar }) {
                 <td>{l.propiedad}</td>
                 <td>{formatPrice(l.renta_monto, l.moneda)}</td>
                 <td>{formatDate(l.fecha_inicio)}</td>
-                <td>{l.estado}</td>
+                <td>
+                  {l.estado}
+                  <Disputa contrato={l} />
+                </td>
                 <td>{l.deuda > 0 ? `${formatPrice(l.deuda, l.moneda)} (${l.cargos_impagos} meses)` : '—'}</td>
                 <td>
                   {l.estado === 'vigente' && (

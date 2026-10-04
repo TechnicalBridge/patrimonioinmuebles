@@ -25,6 +25,8 @@ services:
       #  omision son para la demostracion.
       ADMIN_CORREO: ${ADMIN_CORREO:-admin@patrimonioinmuebles.cl}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-patrimonio}
+      #  Cifra la clave de la agencia y el secreto de sus avisos en la base.
+      CIFRADO_LLAVE: ${CIFRADO_LLAVE:-patrimonio-cifrado-dev-cambiar}
       #  La agencia de cobranza no va aqui: se conecta desde el panel
       #  (pestaña Cobranza) y queda guardada en la base.
 

@@ -20,7 +20,15 @@ export default function CobranzaPanel() {
   const [ocupado, setOcupado] = useState(false);
 
   useEffect(() => {
-    getCobranza().then(setEstado).catch((e) => setAviso({ type: 'error', text: e.message }));
+    getCobranza().then((e) => {
+      setEstado(e);
+      //  Si el sitio corre en Docker y se abrio desde localhost, la agencia no lo
+      //  encontraria ahi: desde otro contenedor, el equipo es host.docker.internal.
+      const { hostname, port } = window.location;
+      if (e.en_docker && ['localhost', '127.0.0.1'].includes(hostname)) {
+        setForm((f) => ({ ...f, url_avisos: `http://host.docker.internal${port ? `:${port}` : ''}/api/eventos` }));
+      }
+    }).catch((e) => setAviso({ type: 'error', text: e.message }));
   }, []);
 
   async function conectar(e) {
@@ -82,7 +90,7 @@ export default function CobranzaPanel() {
           Dirección de la agencia
           <input
             type="url"
-            placeholder="https://agencia.cl"
+            placeholder="https://agencia.cl o http://host.docker.internal:8000"
             value={form.url}
             onChange={(e) => setForm({ ...form, url: e.target.value })}
             required
@@ -106,7 +114,10 @@ export default function CobranzaPanel() {
             onChange={(e) => setForm({ ...form, url_avisos: e.target.value })}
             required
           />
-          <small className="muted">La dirección de este sitio, tal como la ve la agencia, terminada en /api/eventos.</small>
+          <small className="muted">
+            La dirección de este sitio tal como la ve la agencia, terminada en /api/eventos. Si los dos corren en
+            Docker, «localhost» no sirve: para la agencia es ella misma.
+          </small>
         </label>
         <button className="btn" type="submit" disabled={ocupado}>
           {ocupado ? 'Conectando…' : 'Conectar'}
