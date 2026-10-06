@@ -405,6 +405,8 @@ const contratos = [
     codigo: 'CTR-2024-007', propiedad: 3, arrendatario: 3,
     concepto: 'Arriendo local comercial', fecha_inicio: '2024-08-05',
     renta_monto: 38.5, moneda: 'UF',
+    // El local comercial pacta interes por mora; los arriendos de vivienda, no.
+    tasa_interes_mensual: 1.5,
     cargos: [
       { periodo: '2026-07', pagado: null },
       { periodo: '2026-08', pagado: null },
@@ -666,11 +668,12 @@ function sembrarArriendos({ get, run }) {
     const id = run(
       `INSERT INTO leases (
          codigo, property_id, client_id, concepto, fecha_inicio, fecha_termino,
-         renta_monto, moneda, dia_vencimiento, estado
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 5, ?)`,
+         renta_monto, moneda, dia_vencimiento, estado, tasa_interes_mensual
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 5, ?, ?)`,
       [
         c.codigo, propiedadId[c.propiedad - 1], arrendatarioId[c.arrendatario - 1],
         c.concepto, c.fecha_inicio, c.fecha_termino ?? null, c.renta_monto, c.moneda, c.estado ?? 'vigente',
+        c.tasa_interes_mensual ?? null,
       ]
     );
     contratoId[c.codigo] = id;

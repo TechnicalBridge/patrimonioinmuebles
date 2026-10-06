@@ -238,6 +238,22 @@ En la pestaña **Arriendos**:
   contesta, el lote sigue en borrador y se puede volver a enviar tal cual. Sin agencia conectada,
   el botón es *Marcar enviada* y el archivo se entrega a mano.
 
+### El interés por mora
+
+Un contrato puede pactar un **interés por mora**, en porcentaje mensual: al firmarlo, en la ficha
+del cliente, el campo *Interés por mora (% mensual, opcional)*. Lo normal es en un arriendo
+comercial; uno sin interés deja el campo vacío.
+
+Patrimonio no calcula el interés: lo manda en la cartera (`tasa_interes_mensual`) y la plataforma
+de pagos lo cobra. Cada arriendo atrasado crece un poco cada día desde su vencimiento: al 2%
+mensual, un arriendo de $300.000 con 31 días de atraso suma $6.200. Si el arrendatario paga el
+interés, el aviso lo trae aparte del capital: los cargos bajan solo por el capital, y el interés
+queda anotado en `lease_interest_payments`. En **Arriendos**, el contrato dice *2% mensual por
+mora* y cuánto interés cobró la cobranza.
+
+La tasa no puede superar el tope legal que fija la plataforma (hoy, 3% mensual): si lo supera, la
+cartera vuelve con ese contrato rechazado (`tasa_sobre_maxima`).
+
 ### La conexión con la agencia
 
 Patrimonio no tiene escrito el nombre de ninguna agencia. En la pestaña **Cobranza** se pega la
@@ -264,7 +280,7 @@ una. **Está apagado mientras no haya agencia conectada.**
 
 | Aviso | Qué hace Patrimonio |
 | --- | --- |
-| `pago.confirmado` | Abona el pago a los cargos del contrato, del más antiguo al más nuevo, con medio `cobranza` |
+| `pago.confirmado` | Abona el capital a los cargos del contrato, del más antiguo al más nuevo, con medio `cobranza`. Si el pago trae interés por mora, lo anota aparte, una sola vez, sin tocar los cargos |
 | `deuda.saldada` | Lo anota: el saldo ya salió de los pagos |
 | `deuda.disputada` | El contrato queda **En disputa**, con el motivo que dio el arrendatario (*dice que ya pagó*, *no reconoce la deuda*…) |
 | `deuda.reanudada` | **Disputa rechazada:** la deuda corresponde y se sigue cobrando |
@@ -282,7 +298,7 @@ datos de ejemplo de APOFYX y de DataBridge, así que los tres sistemas cuentan l
 | --- | --- | --- |
 | CTR-2025-014 | Felipe Rojas Muñoz | Debe agosto y septiembre |
 | CTR-2026-031 | Valentina Soto Pizarro | Debe septiembre |
-| CTR-2024-007 | Comercial Ñandú SpA | Debe julio a septiembre, en UF |
+| CTR-2024-007 | Comercial Ñandú SpA | Debe julio a septiembre, en UF, con interés por mora de 1,5% mensual |
 | CTR-2025-022 | Tomás Fuentes Leiva | Se puso al día en la oficina: en la cartera va sin cargos |
 | CTR-2026-008 | Josefa Alcaíno Ruiz | Al día |
 | CTR-2025-019 | Rodrigo Pérez Contreras | Debe junio a septiembre |
@@ -302,6 +318,7 @@ erDiagram
     properties ||--o{ leases          : "se arrienda en"
     clients    ||--o{ leases          : "firma"
     leases     ||--o{ charges         : "genera cada mes"
+    leases     ||--o{ lease_interest_payments : "cobra interés en"
     charges    ||--o{ charge_payments : "se paga con"
     collection_batches ||--o{ collection_batch_items : "contiene"
     leases     ||--o{ collection_batch_items : "aparece en"
@@ -316,9 +333,10 @@ erDiagram
 | `properties` | Título, tipo, operación, precio y moneda, dormitorios, baños, m², dirección, comuna, región y fotos |
 | `clients` | El cliente, persona o empresa, con su **RUT** normalizado (único si está). El interesado y el arrendatario son el mismo registro en otra etapa. Un trigger impide firmar sin RUT o sin correo ni teléfono, y quitarle el RUT a quien ya firmó |
 | `inquiries` · `agents` | Por qué propiedad preguntó el cliente, y qué asesor la atiende |
-| `leases` | El contrato, de un cliente. Su `codigo` (`CTR-2025-014`) es el identificador que viaja a la cobranza y permite que un aviso vuelva hasta acá. `disputa_estado` (`abierta`, `rechazada` o `aceptada`), `disputa_motivo` y `disputa_desde` dicen en qué va un reclamo |
+| `leases` | El contrato, de un cliente. Su `codigo` (`CTR-2025-014`) es el identificador que viaja a la cobranza y permite que un aviso vuelva hasta acá. `tasa_interes_mensual` es el interés por mora pactado, si hay. `disputa_estado` (`abierta`, `rechazada` o `aceptada`), `disputa_motivo` y `disputa_desde` dicen en qué va un reclamo |
 | `charges` | Un cargo por mes. El `UNIQUE` impide cobrar dos veces el mismo período |
 | `charge_payments` | Los pagos, sumados aparte. **El saldo se calcula, no se guarda**, para que no haya dos números que puedan discrepar |
+| `lease_interest_payments` | El interés por mora que cobró la cobranza, por contrato. La `referencia` es única, así que un aviso repetido no lo anota dos veces |
 | `collection_batches` | Qué cartera se entregó a cobranza, cuándo, y qué respondió la agencia: `enviado`, `aceptado` o `parcial` |
 | `inbound_events` | Los avisos recibidos, para no procesar dos veces el mismo |
 | `users` · `sessions` | Los usuarios del panel, con su clave en scrypt, y sus sesiones: el hash del token, cuándo vence y si se cerró |
@@ -378,18 +396,19 @@ La agencia de cobranza no va en variables: se conecta en la pestaña **Cobranza*
 npm test
 ```
 
-**52 pruebas** con `node:test`, sobre bases temporales, así que no tocan `server/patrimonio.db`.
+**58 pruebas** con `node:test`, sobre bases temporales, así que no tocan `server/patrimonio.db`.
 
 | Qué cubre |
 | --- |
 | El login: la clave correcta, la sesión que vence y la que se cierra, el bloqueo tras cinco intentos, que el bloqueo viva en la base sin la IP a la vista y que entrar borre los fallos |
-| Que una base de la versión 1 migre a la última **conservando sus datos**, que la conexión con la agencia quede cifrada y se lea igual, y que migrar dos veces no cambie nada |
+| Que una base de la versión 1 migre a la última **conservando sus datos**, que la conexión con la agencia quede cifrada y se lea igual, que la versión 4 sume el interés sin tocar los contratos, y que migrar dos veces no cambie nada |
 | El cifrado: que no deje el valor a la vista, que cada vez salga distinto, y que otra llave o un byte cambiado no se descifren |
 | Los clientes y sus contratos: el RUT válido, el contrato que empieza en el pasado con sus cargos, y lo que la base no permite |
 | Que la cartera lleve a todos los clientes con contrato, con `cargos: []` para los que están al día, y que sea **exactamente** el ejemplo publicado del contrato |
 | Conectar la agencia: la clave de otra empresa se rechaza, el secreto de sus avisos queda en la base, y la ayuda cuando alguien pone `localhost` |
 | El cálculo de morosos a una fecha de corte, con sus días de mora, y que emitir los cargos del mes dos veces no cobre dos veces |
 | Que un pago en la oficina deje el **saldo** en la cartera, y que el mismo pago no abone dos veces |
+| El interés del contrato: que viaje en la cartera, que una tasa inválida no se guarde, y que un pago con interés abone el capital a los cargos y anote el interés aparte, una sola vez |
 | Que el lote se emita, se descargue, se entregue a la agencia guardando su respuesta contrato por contrato, y que si la agencia falla siga en borrador |
 | Los avisos: firma, antirrepetición, deduplicación, y la disputa abierta, rechazada y aceptada en el contrato |
 | Que otra página no reciba permiso de CORS, y que **ningún error salga con la traza del servidor** |
@@ -397,15 +416,16 @@ npm test
 
 ---
 
-## Estado al 3 de octubre de 2026
+## Estado al 6 de octubre de 2026
 
 | Verificación | Resultado |
 | --- | --- |
-| `npm test` | **52 pruebas**, sin fallos |
+| `npm test` | **58 pruebas**, sin fallos |
 | Build del cliente | Correcto |
-| Migración sobre la base del volumen | Pasó de la versión 2 a la 3 conservando los datos, con la conexión a la agencia cifrada |
+| Migración sobre la base del volumen | Pasó de la versión 3 a la 4 conservando sus 46 contratos |
+| Interés por mora, en vivo | Un contrato al 2% mensual con tres arriendos de $300.000 atrasados llegó por APOFYX a DataBridge, que cobró $918.800 con Khipu real: $900.000 de capital y $18.800 de interés. Los cargos quedaron en $0 y el contrato muestra *$18.800 de intereses cobrados* |
 | Cadena completa | 16 de 16 comprobaciones con APOFYX y DataBridge: un cliente nuevo moroso llega a DataBridge, su reclamo vuelve como *En disputa* y después *Disputa rechazada*, y su pago deja el contrato al día |
-| Navegador (Edge) | La etiqueta de la disputa en la tabla de contratos de Arriendos, abierta y aceptada |
+| Navegador (Edge) | La etiqueta de la disputa en la tabla de contratos de Arriendos, abierta y aceptada. El interés del contrato y lo cobrado en Arriendos, y el campo del interés al firmar un contrato |
 
 **Lo que no está:**
 

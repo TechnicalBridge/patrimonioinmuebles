@@ -523,6 +523,7 @@ const MIGRACIONES = [
   [1, esquemaV1],
   [2, aV2],
   [3, aV3],
+  [4, aV4],
 ];
 export const VERSION = MIGRACIONES.at(-1)[0];
 
@@ -557,6 +558,40 @@ function aV3() {
       db.run('UPDATE agency_connection SET clave = ?, secreto_eventos = ? WHERE id = 1',
         [cifrar(clave), cifrar(secreto)]);
     }
+    db.exec('COMMIT');
+  } catch (error) {
+    try { db.exec('ROLLBACK'); } catch { /* ya no habia transaccion */ }
+    throw error;
+  }
+}
+
+// ===========================================================================
+//  Version 4
+//    - la tasa de interes del contrato: la pacta Patrimonio por contrato y
+//      viaja en la cartera. La cobranza la cobra por la mora y en el convenio;
+//    - los intereses cobrados: llegan con cada pago de la cobranza, aparte del
+//      capital, y no se imputan a los cargos.
+//  Solo agrega una columna y una tabla.
+// ===========================================================================
+
+function aV4() {
+  db.exec('BEGIN');
+  try {
+    db.exec(`
+    ALTER TABLE leases ADD COLUMN tasa_interes_mensual REAL
+      CHECK (tasa_interes_mensual IS NULL OR (tasa_interes_mensual > 0 AND tasa_interes_mensual <= 100));
+
+    -- Lo que la cobranza cobro de intereses por mora. La referencia es el pago
+    -- de la cobranza: un aviso que llega dos veces no lo registra dos veces.
+    CREATE TABLE lease_interest_payments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      lease_id INTEGER NOT NULL REFERENCES leases(id) ON DELETE RESTRICT,
+      monto REAL NOT NULL CHECK (monto > 0),
+      pagado_en TEXT NOT NULL,
+      referencia TEXT NOT NULL UNIQUE,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+  `);
     db.exec('COMMIT');
   } catch (error) {
     try { db.exec('ROLLBACK'); } catch { /* ya no habia transaccion */ }

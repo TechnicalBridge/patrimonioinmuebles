@@ -379,9 +379,25 @@ export default function ArriendosPanel() {
                 <td>
                   {c.direccion}, {c.comuna}
                 </td>
-                <td>{formatPrice(c.renta_monto, c.moneda, 'arriendo')}</td>
+                <td>
+                  {formatPrice(c.renta_monto, c.moneda, 'arriendo')}
+                  {c.tasa_interes_mensual ? (
+                    <>
+                      <br />
+                      <span className="muted">{String(c.tasa_interes_mensual).replace('.', ',')}% mensual por mora</span>
+                    </>
+                  ) : null}
+                </td>
                 <td>día {c.dia_vencimiento}</td>
-                <td>{c.deuda > 0 ? formatPrice(c.deuda, c.moneda) : '—'}</td>
+                <td>
+                  {c.deuda > 0 ? formatPrice(c.deuda, c.moneda) : '—'}
+                  {c.intereses_cobrados > 0 ? (
+                    <>
+                      <br />
+                      <span className="muted">{formatPrice(c.intereses_cobrados, c.moneda)} de intereses cobrados</span>
+                    </>
+                  ) : null}
+                </td>
                 <td>
                   {c.estado}
                   <Disputa contrato={c} />

@@ -287,6 +287,15 @@ function FichaCliente({ cliente, avisoInicial, volver, recargar }) {
                      onChange={(e) => setContrato({ ...contrato, dia_vencimiento: e.target.value })} />
             </label>
           </div>
+          <label>
+            Interés por mora (% mensual, opcional)
+            <input type="number" min="0.01" max="100" step="0.01" placeholder="Sin interés"
+                   value={contrato.tasa_interes_mensual ?? ''}
+                   onChange={(e) => setContrato({ ...contrato, tasa_interes_mensual: e.target.value })} />
+            <small className="muted">
+              Si lo pactan, un arriendo atrasado crece por cada día de atraso y el convenio de pago lleva interés.
+            </small>
+          </label>
           <div className="filters">
             <button className="btn" type="submit">Firmar contrato</button>
             <button className="btn ghost-btn" type="button" onClick={() => setContrato(null)}>Cancelar</button>
