@@ -25,6 +25,9 @@ export function listarContratos() {
   return all(`
     SELECT l.id, l.codigo, l.concepto, l.renta_monto, l.moneda, l.estado,
            l.fecha_inicio, l.dia_vencimiento, l.disputa_estado, l.disputa_motivo, l.disputa_desde,
+           l.tasa_interes_mensual,
+           COALESCE((SELECT SUM(i.monto) FROM lease_interest_payments i WHERE i.lease_id = l.id), 0)
+             AS intereses_cobrados,
            c.id AS client_id, c.rut, c.nombre AS arrendatario, c.correo, c.telefono,
            p.direccion, p.comuna,
            COALESCE(d.deuda, 0) AS deuda,
@@ -180,19 +183,35 @@ export function crearContrato(entrada = {}) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(inicio) || Number.isNaN(Date.parse(inicio))) {
     throw error('La fecha de inicio va como 2026-07-01');
   }
+  const tasa = tasaDelContrato(entrada.tasa_interes_mensual);
 
   const codigo = proximoCodigo(inicio);
   const id = run(
-    `INSERT INTO leases (codigo, property_id, client_id, concepto, fecha_inicio, renta_monto, moneda, dia_vencimiento)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO leases (codigo, property_id, client_id, concepto, fecha_inicio, renta_monto, moneda, dia_vencimiento,
+                         tasa_interes_mensual)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [codigo, propiedad.id, cliente.id, String(entrada.concepto || '').trim() || 'Arriendo mensual',
-     inicio, renta, moneda, dia]
+     inicio, renta, moneda, dia, tasa]
   );
   run("UPDATE properties SET estatus = 'arrendada' WHERE id = ?", [propiedad.id]);
 
   const contrato = { id, renta_monto: renta, dia_vencimiento: dia };
   const cargos = mesesEntre(inicio, hoy()).filter((periodo) => emitirCargo(contrato, periodo)).length;
   return { ...get('SELECT * FROM leases WHERE id = ?', [id]), cargos_emitidos: cargos };
+}
+
+/**
+ * El interes por mora que se pacta en el contrato, en % mensual. Es opcional:
+ * sin el, un arriendo atrasado no genera intereses. La cobranza lo cobra por la
+ * mora y en el convenio, y rechaza uno sobre la tasa maxima convencional.
+ */
+function tasaDelContrato(valor) {
+  if (valor === undefined || valor === null || String(valor).trim() === '') return null;
+  const tasa = Number(String(valor).replace(',', '.'));
+  if (!(tasa > 0 && tasa <= 100) || Math.round(tasa * 100) !== tasa * 100) {
+    throw error('El interés va como un porcentaje mensual mayor que cero, con hasta dos decimales: 1,5');
+  }
+  return tasa;
 }
 
 /** Termina un contrato. La deuda que tenga no se borra: se sigue cobrando. */
@@ -443,8 +462,21 @@ function aplicarPagoExterno(evento) {
   const contrato = get('SELECT id, moneda FROM leases WHERE codigo = ?', [datos.deuda_id_externo]);
   if (!contrato) return 'contrato desconocido';
 
-  let porRepartir = Number(datos.monto);
+  //  Con mora, el pago trae capital e interes por separado: el capital se
+  //  imputa a los cargos y el interes se registra aparte. Repartir el monto
+  //  completo abonaria con la mora cargos que no se pagaron.
+  const interes = Number(datos.interes) > 0 ? Number(datos.interes) : 0;
+  let porRepartir = datos.capital !== undefined && datos.capital !== null
+    ? Number(datos.capital) : Number(datos.monto);
   if (!(porRepartir > 0)) return 'monto invalido';
+  if (interes > 0) {
+    run(
+      `INSERT OR IGNORE INTO lease_interest_payments (lease_id, monto, pagado_en, referencia)
+       VALUES (?, ?, ?, ?)`,
+      [contrato.id, interes, (datos.pagado_en || '').slice(0, 10) || hoy(),
+       `${datos.pago_id || evento.id}-interes`]
+    );
+  }
 
   // El pago se reparte sobre los cargos impagos, del mas viejo al mas nuevo:
   // es como se imputa un abono en una cuenta corriente de arriendo.
@@ -467,5 +499,5 @@ function aplicarPagoExterno(evento) {
     porRepartir = Math.round((porRepartir - abono) * 100) / 100;
     abonados++;
   }
-  return `${abonados} cargo(s) abonado(s)`;
+  return `${abonados} cargo(s) abonado(s)` + (interes > 0 ? `, ${interes} de intereses` : '');
 }

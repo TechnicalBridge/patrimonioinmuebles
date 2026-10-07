@@ -56,7 +56,7 @@ function deudor(contrato) {
  */
 export function construirCartera({ fechaCorte, idExterno }) {
   const contratos = all(
-    `SELECT l.id, l.codigo, l.concepto, l.moneda, l.estado,
+    `SELECT l.id, l.codigo, l.concepto, l.moneda, l.estado, l.tasa_interes_mensual,
             c.rut, c.tipo, c.nombre, c.apellido, c.correo, c.telefono,
             p.direccion, p.comuna
        FROM leases l
@@ -80,6 +80,7 @@ export function construirCartera({ fechaCorte, idExterno }) {
         contrato: contrato.codigo,
         propiedad: `${contrato.direccion}, ${contrato.comuna}`,
       },
+      ...(contrato.tasa_interes_mensual ? { tasa_interes_mensual: contrato.tasa_interes_mensual } : {}),
       cargos: cargos.map((c) => ({
         concepto: c.concepto,
         periodo: c.periodo,

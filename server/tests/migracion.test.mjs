@@ -76,6 +76,11 @@ test('los contratos de antes no estan en disputa', () => {
   assert.equal(contrato.disputa_motivo, null);
 });
 
+test('los contratos de antes no generan intereses, y hay donde anotar los que se cobren', () => {
+  assert.equal(get("SELECT tasa_interes_mensual FROM leases WHERE codigo = 'CTR-1'").tasa_interes_mensual, null);
+  assert.equal(get('SELECT COUNT(*) AS n FROM lease_interest_payments').n, 0);
+});
+
 test('migrar otra vez no hace nada', () => {
   migrar();
   assert.equal(versionDeLaBase(), VERSION);
