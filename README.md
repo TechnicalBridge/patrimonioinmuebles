@@ -181,7 +181,7 @@ En este repositorio eso se traduce en dos prácticas concretas:
 
 | Práctica | Qué resuelve |
 | --- | --- |
-| **Integración continua** | GitHub Actions corre las pruebas y compila el cliente en cada push |
+| **Integración continua** | GitHub Actions corre las pruebas y compila el cliente en cada push. **`main` está protegida:** solo entra un PR, con squash y con las pruebas del servidor y del cliente en verde |
 | **Pruebas sobre base temporal** | Corren con `PATRIMONIO_DB` apuntando a un archivo temporal, así que **nunca tocan los datos de desarrollo**. Una de ellas compara la cartera que genera el panel con el ejemplo publicado del contrato: si alguno de los dos cambia, la prueba falla |
 
 ---
