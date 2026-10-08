@@ -3,6 +3,7 @@
 // sembrada desde cero, nunca sobre la de desarrollo.
 //
 //     npm test
+import './entorno.mjs';
 import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';

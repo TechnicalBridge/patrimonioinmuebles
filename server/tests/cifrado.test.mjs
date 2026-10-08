@@ -1,12 +1,15 @@
 // Los secretos que Patrimonio guarda para poder leerlos de vuelta: la clave de
 // la agencia y el secreto de sus avisos. Cifrados, con una llave que no esta en
 // la base, y sin que un cambio pase inadvertido.
+import './entorno.mjs';
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 const { cifrar, descifrar, estaCifrado } = await import('../cifrado.js');
 
-afterEach(() => { delete process.env.CIFRADO_LLAVE; });
+//  La llave de la corrida, que una prueba cambia y esta devuelve.
+const LLAVE = process.env.CIFRADO_LLAVE;
+afterEach(() => { process.env.CIFRADO_LLAVE = LLAVE; });
 
 test('cifra y descifra de vuelta, sin dejar el valor a la vista', () => {
   const cifrado = cifrar('ak_clave_de_la_agencia');
@@ -32,9 +35,16 @@ test('con otra llave, o con un byte cambiado, no se descifra', () => {
   const cifrado = cifrar('whsec_de_la_agencia');
   process.env.CIFRADO_LLAVE = 'otra-llave';
   assert.throws(() => descifrar(cifrado));
-  delete process.env.CIFRADO_LLAVE;
+  process.env.CIFRADO_LLAVE = LLAVE;
 
   const bytes = Buffer.from(cifrado.slice('enc:v1:'.length), 'base64');
   bytes[bytes.length - 1] ^= 1;
   assert.throws(() => descifrar('enc:v1:' + bytes.toString('base64')));
+});
+
+test('sin CIFRADO_LLAVE no se cifra ni se descifra: no hay una llave de reemplazo', () => {
+  const cifrado = cifrar('ak_clave');
+  delete process.env.CIFRADO_LLAVE;
+  assert.throws(() => cifrar('otra'), /Falta CIFRADO_LLAVE/);
+  assert.throws(() => descifrar(cifrado), /Falta CIFRADO_LLAVE/);
 });

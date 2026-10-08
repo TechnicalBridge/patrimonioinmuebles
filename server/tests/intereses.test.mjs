@@ -3,6 +3,7 @@
 // base temporal sembrada desde cero.
 //
 //     npm test
+import './entorno.mjs';
 import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';

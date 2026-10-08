@@ -11,9 +11,10 @@ APOFYX, una agencia de cobranza ficticia, para continuar el Capstone. Patrimonio
 deuda. **Patrimonio Inmuebles** → [APOFYX](https://github.com/TechnicalBridge/APOFYX), la agencia →
 [DataBridge](https://github.com/TechnicalBridge/TB_web), donde el arrendatario paga.
 
-**Se levanta con una orden** y queda en http://localhost:3001. Solo hace falta Docker:
+**Se levanta con dos órdenes** y queda en http://localhost:3001. Solo hace falta Docker:
 
 ```powershell
+powershell -ExecutionPolicy Bypass -File .\preparar-env.ps1    # una sola vez: el .env con claves al azar
 docker compose up -d --build
 ```
 
@@ -100,16 +101,21 @@ base compartida.
 
 Lo único que hace falta es **Docker Desktop** corriendo.
 
+La primera vez, `preparar-env.ps1` crea el `.env` con la clave del panel y la llave de cifrado al
+azar: **ninguna tiene un valor escrito en el repositorio**, porque sería público. Sin el `.env`,
+`docker compose` se detiene y dice cuál falta.
+
 ```powershell
 git clone https://github.com/TechnicalBridge/patrimonioinmuebles.git
 cd patrimonioinmuebles
+powershell -ExecutionPolicy Bypass -File .\preparar-env.ps1    # una sola vez: el .env con claves al azar
 docker compose up -d --build
 ```
 
 | | |
 | --- | --- |
 | Sitio | http://localhost:3001 |
-| Panel | http://localhost:3001/admin · `admin@patrimonioinmuebles.cl`, clave `patrimonio` |
+| Panel | http://localhost:3001/admin · `admin@patrimonioinmuebles.cl`, con la clave de `ADMIN_PASSWORD` de tu `.env` |
 
 La base se crea sola la primera vez, con propiedades, clientes y contratos de demostración, y vive
 en un volumen: sobrevive a `docker compose down` y a reconstruir la imagen. Para partir de cero,
@@ -117,9 +123,10 @@ en un volumen: sobrevive a `docker compose down` y a reconstruir la imagen. Para
 
 ### Para programar
 
-Hace falta **Node 22 o superior**.
+Hace falta **Node 22 o superior**. El servidor lee los secretos del mismo `.env` de la raíz.
 
 ```powershell
+powershell -ExecutionPolicy Bypass -File .\preparar-env.ps1    # si todavía no tienes .env
 npm install
 npm run install:all
 npm run dev
@@ -376,13 +383,16 @@ dentro de la imagen: si estuviera dentro, cada reconstrucción borraría los dat
 
 ### Variables de entorno
 
-Documentadas en [`.env.example`](.env.example). Todas tienen valor por omisión.
+Documentadas en [`.env.example`](.env.example), y `preparar-env.ps1` crea el `.env` desde él. **La
+clave del panel y la llave de cifrado no tienen valor por omisión**: si falta una, el servidor no
+arranca y dice cuál. Lo demás tiene un valor de desarrollo.
 
 | Variable | Por omisión | Para qué |
 | --- | --- | --- |
 | `PORT` | `3001` | Puerto del sitio y de la API |
-| `ADMIN_CORREO`, `ADMIN_PASSWORD` | `admin@patrimonioinmuebles.cl` / `patrimonio` | El primer usuario del panel. Se crea solo si la base no tiene ninguno. **Cambiar** |
-| `CIFRADO_LLAVE` | `patrimonio-cifrado-dev-cambiar` | Cifra en la base la clave de la agencia y el secreto de sus avisos. Si se cambia, hay que volver a conectar la agencia. **Cambiar** |
+| `ADMIN_CORREO` | `admin@patrimonioinmuebles.cl` | El correo del primer usuario del panel. Se crea solo si la base no tiene ninguno |
+| `ADMIN_PASSWORD` | el `.env` | Su clave. Para cambiarla después, `preparar-env.ps1 -Cambiar ADMIN_PASSWORD`, que la cambia también en el usuario a través del servidor (`PUT /api/admin/mi-clave`) |
+| `CIFRADO_LLAVE` | el `.env` | Cifra en la base la clave de la agencia y el secreto de sus avisos. Si se cambia, hay que volver a conectar la agencia. |
 | `CORS_ORIGENES` | ninguno | Los orígenes que pueden usar la API desde otro sitio, separados por coma. Por omisión ninguno: el panel se sirve desde el mismo origen y la agencia habla de servidor a servidor |
 | `PATRIMONIO_DB` | `/datos/patrimonio.db` en el contenedor | Dónde vive la base |
 
@@ -396,11 +406,13 @@ La agencia de cobranza no va en variables: se conecta en la pestaña **Cobranza*
 npm test
 ```
 
-**58 pruebas** con `node:test`, sobre bases temporales, así que no tocan `server/patrimonio.db`.
+**62 pruebas** con `node:test`, sobre bases temporales, así que no tocan `server/patrimonio.db`.
 
 | Qué cubre |
 | --- |
 | El login: la clave correcta, la sesión que vence y la que se cierra, el bloqueo tras cinco intentos, que el bloqueo viva en la base sin la IP a la vista y que entrar borre los fallos |
+| Cambiar la clave (`PUT /api/admin/mi-clave`): pide la actual y una nueva de al menos 12 caracteres, distinta, y cierra las otras sesiones |
+| Sin secretos no arranca: sin `CIFRADO_LLAVE` o sin `ADMIN_PASSWORD` el servidor sale y dice cuál falta, y sin la llave no se cifra ni se descifra nada. Las pruebas inventan sus propias claves en cada corrida (`tests/entorno.mjs`) |
 | Que una base de la versión 1 migre a la última **conservando sus datos**, que la conexión con la agencia quede cifrada y se lea igual, que la versión 4 sume el interés sin tocar los contratos, y que migrar dos veces no cambie nada |
 | El cifrado: que no deje el valor a la vista, que cada vez salga distinto, y que otra llave o un byte cambiado no se descifren |
 | Los clientes y sus contratos: el RUT válido, el contrato que empieza en el pasado con sus cargos, y lo que la base no permite |
@@ -420,7 +432,7 @@ npm test
 
 | Verificación | Resultado |
 | --- | --- |
-| `npm test` | **58 pruebas**, sin fallos |
+| `npm test` | **62 pruebas**, sin fallos |
 | Build del cliente | Correcto |
 | Migración sobre la base del volumen | Pasó de la versión 3 a la 4 conservando sus 46 contratos |
 | Interés por mora, en vivo | Un contrato al 2% mensual con tres arriendos de $300.000 atrasados llegó por APOFYX a DataBridge, que cobró $918.800 con Khipu real: $900.000 de capital y $18.800 de interés. Los cargos quedaron en $0 y el contrato muestra *$18.800 de intereses cobrados* |

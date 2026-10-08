@@ -21,12 +21,13 @@ services:
 
     environment:
       PORT: "3001"
-      #  El primer usuario del panel, si la base no tiene ninguno. Los de por
-      #  omision son para la demostracion.
+      #  El primer usuario del panel, si la base no tiene ninguno. La clave y la
+      #  llave de cifrado no tienen valor por omision (seria publico): salen del
+      #  .env que crea preparar-env.ps1, y sin el compose se detiene.
       ADMIN_CORREO: ${ADMIN_CORREO:-admin@patrimonioinmuebles.cl}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-patrimonio}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Falta ADMIN_PASSWORD en el .env (crealo con preparar-env.ps1)}
       #  Cifra la clave de la agencia y el secreto de sus avisos en la base.
-      CIFRADO_LLAVE: ${CIFRADO_LLAVE:-patrimonio-cifrado-dev-cambiar}
+      CIFRADO_LLAVE: ${CIFRADO_LLAVE:?Falta CIFRADO_LLAVE en el .env (crealo con preparar-env.ps1)}
       #  La agencia de cobranza no va aqui: se conecta desde el panel
       #  (pestaña Cobranza) y queda guardada en la base.
 

@@ -13,11 +13,14 @@ import crypto from 'node:crypto';
 
 const PREFIJO = 'enc:v1:';
 
-//  Solo para desarrollo, como las demas claves por omision de este proyecto.
-//  En un despliegue se cambia con CIFRADO_LLAVE.
-const LLAVE_DE_DESARROLLO = 'patrimonio-cifrado-dev-cambiar';
-
-const llave = () => crypto.createHash('sha256').update(process.env.CIFRADO_LLAVE || LLAVE_DE_DESARROLLO).digest();
+//  Sin valor por omision: una llave escrita aqui seria publica, y cualquiera
+//  podria descifrar lo que se guardo con ella. Si falta, no se cifra ni se
+//  descifra nada, y el servidor no arranca (index.js).
+function llave() {
+  const secreto = process.env.CIFRADO_LLAVE;
+  if (!secreto) throw new Error('Falta CIFRADO_LLAVE en el .env (crealo con preparar-env.ps1)');
+  return crypto.createHash('sha256').update(secreto).digest();
+}
 
 export const estaCifrado = (valor) => typeof valor === 'string' && valor.startsWith(PREFIJO);
 

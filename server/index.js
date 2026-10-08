@@ -32,7 +32,16 @@ import {
 } from './arriendos.js';
 import { actualizarCliente, crearCliente, listarClientes, verCliente } from './clientes.js';
 import { conectar, desconectar, estadoDeLaCobranza, secretoDeLosAvisos } from './cobranza.js';
-import { entrar, salir, usuarioDeLaSesion } from './usuarios.js';
+import { cambiarClave, entrar, salir, usuarioDeLaSesion } from './usuarios.js';
+
+//  Los secretos no tienen valor por omision: uno escrito en el codigo seria
+//  publico. Sin ellos el servidor no arranca y dice cual falta. preparar-env.ps1
+//  los crea al azar en el .env.
+const faltan = ['CIFRADO_LLAVE', 'ADMIN_PASSWORD'].filter((variable) => !process.env[variable]);
+if (faltan.length) {
+  console.error(`Falta ${faltan.join(' y ')} en el .env. Crealo con preparar-env.ps1, que pone claves al azar.`);
+  process.exit(1);
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3001);
@@ -215,6 +224,16 @@ app.post('/api/admin/logout', requireAdmin, (req, res) => {
 });
 
 app.get('/api/admin/yo', requireAdmin, (req, res) => res.json(req.usuario));
+
+//  Cambiar la propia clave: con la sesion y la clave actual.
+app.put('/api/admin/mi-clave', requireAdmin, (req, res) => {
+  try {
+    cambiarClave(req.usuario.id, tokenDe(req), req.body || {});
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
 
 app.get('/api/admin/inquiries', requireAdmin, (_req, res) => {
   const rows = all(`
