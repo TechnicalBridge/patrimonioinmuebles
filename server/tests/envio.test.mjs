@@ -1,6 +1,7 @@
 // La cobranza: conectarse a una agencia desde el panel y entregarle el lote.
 // El servidor de verdad sobre una base temporal, y una agencia falsa que habla
 // el contrato de integracion y anota lo que recibe.
+import { CLAVE_ADMIN } from './entorno.mjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -75,13 +76,13 @@ before(async () => {
   const base = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'patrimonio-envio-')), 'prueba.db');
   servidor = spawn(process.execPath, ['index.js'], {
     cwd: path.join(import.meta.dirname, '..'),
-    env: { ...process.env, PORT: String(PUERTO), PATRIMONIO_DB: base, ADMIN_CORREO: '', ADMIN_PASSWORD: '' },
+    env: { ...process.env, PORT: String(PUERTO), PATRIMONIO_DB: base, ADMIN_CORREO: '', ADMIN_PASSWORD: CLAVE_ADMIN },
   });
   await new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error('el servidor no arranco')), 20000);
     servidor.stdout.on('data', (d) => { if (String(d).includes('API en')) { clearTimeout(t); resolve(); } });
   });
-  const sesion = await post('/admin/login', { correo: 'admin@patrimonioinmuebles.cl', clave: 'patrimonio' });
+  const sesion = await post('/admin/login', { correo: 'admin@patrimonioinmuebles.cl', clave: CLAVE_ADMIN });
   H = { Authorization: `Bearer ${sesion.body.token}` };
 });
 

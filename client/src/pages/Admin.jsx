@@ -119,7 +119,6 @@ export default function Admin() {
         <div className="container narrow">
           <p className="kicker">Panel interno</p>
           <h1>Entrar</h1>
-          <p className="muted">Demostración: admin@patrimonioinmuebles.cl, clave patrimonio</p>
           <form className="form" onSubmit={login}>
             <label>
               Correo

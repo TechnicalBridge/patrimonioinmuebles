@@ -1,6 +1,7 @@
 // Una base que ya existia, con el esquema de la version 1 y sus datos, pasa a
 // la ultima version sin perder nada. Es lo que le pasa al volumen de Docker de
 // quien ya tenia Patrimonio andando.
+import './entorno.mjs';
 import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';

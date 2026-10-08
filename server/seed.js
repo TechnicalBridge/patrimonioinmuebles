@@ -716,15 +716,21 @@ function sembrarArriendos({ get, run }) {
 // -----------------------------------------------------------------------------
 /**
  * Si no hay ningun usuario, crea el primero con ADMIN_CORREO y ADMIN_PASSWORD.
- * Sin esas variables usa los de la demostracion, que estan en el README. Con
- * usuarios ya creados no toca nada: cambiar la variable despues no cambia la
- * clave de nadie.
+ * La clave no tiene valor por omision: una escrita en el codigo seria publica.
+ * Con usuarios ya creados no toca nada: cambiar la variable despues no cambia
+ * la clave de nadie (para eso esta PUT /api/admin/mi-clave).
  */
+function claveDelPrimerUsuario() {
+  const clave = process.env.ADMIN_PASSWORD;
+  if (!clave) throw new Error('Falta ADMIN_PASSWORD en el .env (crealo con preparar-env.ps1)');
+  return clave;
+}
+
 export function sembrarAdministrador({ get, run }) {
   if (get('SELECT 1 AS hay FROM users LIMIT 1')) return;
   run('INSERT INTO users (correo, nombre, clave_hash) VALUES (?, ?, ?)', [
     (process.env.ADMIN_CORREO || 'admin@patrimonioinmuebles.cl').trim().toLowerCase(),
     process.env.ADMIN_NOMBRE || 'Administración',
-    huellaDeClave(process.env.ADMIN_PASSWORD || 'patrimonio'),
+    huellaDeClave(claveDelPrimerUsuario()),
   ]);
 }

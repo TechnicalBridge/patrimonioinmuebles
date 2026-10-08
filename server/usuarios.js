@@ -4,7 +4,7 @@
 // en la memoria del servidor: sobrevive a un reinicio, se puede cerrar de
 // verdad y vence sola a las 8 horas.
 
-import { claveCorrecta, huellaDeToken, nuevoToken } from './claves.js';
+import { claveCorrecta, huellaDeClave, huellaDeToken, nuevoToken } from './claves.js';
 import { get, run } from './db.js';
 
 const HORAS_DE_SESION = 8;
@@ -61,6 +61,20 @@ export function usuarioDeLaSesion(token) {
     [huellaDeToken(token), new Date().toISOString()]
   );
   return fila ? publico(fila) : null;
+}
+
+/**
+ * Cambia la clave de quien esta en la sesion. Pide la actual, y cierra sus
+ * otras sesiones: quien la tuviera abierta con la clave vieja queda afuera.
+ */
+export function cambiarClave(usuarioId, tokenActual, { actual, nueva } = {}) {
+  const usuario = get('SELECT * FROM users WHERE id = ? AND activo = 1', [usuarioId]);
+  if (!usuario || !claveCorrecta(actual, usuario.clave_hash)) throw error('La clave actual no es correcta', 401);
+  if (String(nueva || '').length < 12) throw error('La clave nueva tiene que tener al menos 12 caracteres', 400);
+  if (nueva === actual) throw error('La clave nueva tiene que ser distinta de la actual', 400);
+  run('UPDATE users SET clave_hash = ? WHERE id = ?', [huellaDeClave(nueva), usuarioId]);
+  run("UPDATE sessions SET revocada_en = datetime('now') WHERE user_id = ? AND token_hash <> ? AND revocada_en IS NULL",
+    [usuarioId, huellaDeToken(tokenActual)]);
 }
 
 export function salir(token) {

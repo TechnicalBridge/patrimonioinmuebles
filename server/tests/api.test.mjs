@@ -2,6 +2,7 @@
 // el login con sesiones en la base, clientes y contratos, cargos del mes, pagos
 // en oficina, el lote para la cobranza y los avisos firmados que vuelven con
 // los pagos. Una agencia falsa atiende la conexion.
+import { CLAVE_ADMIN } from './entorno.mjs';
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -29,7 +30,7 @@ const firmar = (cuerpo, marca = Math.floor(Date.now() / 1000), secreto = SECRETO
   'X-Timestamp': String(marca),
   'X-Firma': 'v1=' + crypto.createHmac('sha256', secreto).update(`${marca}.${cuerpo}`).digest('hex'),
 });
-const entrar = (correo = 'admin@patrimonioinmuebles.cl', clave = 'patrimonio') =>
+const entrar = (correo = 'admin@patrimonioinmuebles.cl', clave = CLAVE_ADMIN) =>
   j('/admin/login', { method: 'POST', body: JSON.stringify({ correo, clave }), headers: { Authorization: '' } });
 
 /** La primera vez del mes: el dia 1 de hace `meses` meses, como 2026-07-01. */
@@ -56,7 +57,7 @@ before(async () => {
   const base = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'patrimonio-api-')), 'prueba.db');
   servidor = spawn(process.execPath, ['index.js'], {
     cwd: path.join(import.meta.dirname, '..'),
-    env: { ...process.env, PORT: String(PUERTO), PATRIMONIO_DB: base, ADMIN_CORREO: '', ADMIN_PASSWORD: '' },
+    env: { ...process.env, PORT: String(PUERTO), PATRIMONIO_DB: base, ADMIN_CORREO: '', ADMIN_PASSWORD: CLAVE_ADMIN },
   });
   await new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error('el servidor no arranco')), 20000);
@@ -83,7 +84,7 @@ test('se entra con correo y clave, y la clave mala no dice si el correo existe',
   assert.equal(bien.status, 200);
   assert.equal(bien.body.usuario.correo, 'admin@patrimonioinmuebles.cl');
   const claveMala = await entrar('admin@patrimonioinmuebles.cl', 'otra');
-  const correoMalo = await entrar('nadie@patrimonioinmuebles.cl', 'patrimonio');
+  const correoMalo = await entrar('nadie@patrimonioinmuebles.cl', CLAVE_ADMIN);
   assert.equal(claveMala.status, 401);
   assert.equal(correoMalo.status, 401);
   assert.equal(claveMala.body.error, correoMalo.body.error);
