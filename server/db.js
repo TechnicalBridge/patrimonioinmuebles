@@ -524,6 +524,7 @@ const MIGRACIONES = [
   [2, aV2],
   [3, aV3],
   [4, aV4],
+  [5, aV5],
 ];
 export const VERSION = MIGRACIONES.at(-1)[0];
 
@@ -591,6 +592,42 @@ function aV4() {
       referencia TEXT NOT NULL UNIQUE,
       created_at TEXT DEFAULT (datetime('now'))
     );
+  `);
+    db.exec('COMMIT');
+  } catch (error) {
+    try { db.exec('ROLLBACK'); } catch { /* ya no habia transaccion */ }
+    throw error;
+  }
+}
+
+// ===========================================================================
+//  Version 5
+//    - los intereses condonados: si la cobranza ofrece un descuento por pronto
+//      pago, el aviso trae cuanto de la mora se condono. Se guarda junto al
+//      interes cobrado del mismo pago, aunque se haya condonado toda la mora y
+//      el cobrado sea $0.
+//  SQLite no deja cambiar un CHECK, y el de antes exigia monto > 0: la tabla
+//  se reconstruye con sus filas, que quedan con 0 condonado.
+// ===========================================================================
+
+function aV5() {
+  db.exec('BEGIN');
+  try {
+    db.exec(`
+    CREATE TABLE lease_interest_payments_v5 (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      lease_id INTEGER NOT NULL REFERENCES leases(id) ON DELETE RESTRICT,
+      monto REAL NOT NULL CHECK (monto >= 0),
+      condonado REAL NOT NULL DEFAULT 0 CHECK (condonado >= 0),
+      pagado_en TEXT NOT NULL,
+      referencia TEXT NOT NULL UNIQUE,
+      created_at TEXT DEFAULT (datetime('now')),
+      CHECK (monto > 0 OR condonado > 0)
+    );
+    INSERT INTO lease_interest_payments_v5 (id, lease_id, monto, condonado, pagado_en, referencia, created_at)
+      SELECT id, lease_id, monto, 0, pagado_en, referencia, created_at FROM lease_interest_payments;
+    DROP TABLE lease_interest_payments;
+    ALTER TABLE lease_interest_payments_v5 RENAME TO lease_interest_payments;
   `);
     db.exec('COMMIT');
   } catch (error) {

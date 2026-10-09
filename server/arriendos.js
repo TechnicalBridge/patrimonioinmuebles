@@ -28,6 +28,8 @@ export function listarContratos() {
            l.tasa_interes_mensual,
            COALESCE((SELECT SUM(i.monto) FROM lease_interest_payments i WHERE i.lease_id = l.id), 0)
              AS intereses_cobrados,
+           COALESCE((SELECT SUM(i.condonado) FROM lease_interest_payments i WHERE i.lease_id = l.id), 0)
+             AS intereses_condonados,
            c.id AS client_id, c.rut, c.nombre AS arrendatario, c.correo, c.telefono,
            p.direccion, p.comuna,
            COALESCE(d.deuda, 0) AS deuda,
@@ -465,15 +467,18 @@ function aplicarPagoExterno(evento) {
   //  Con mora, el pago trae capital e interes por separado: el capital se
   //  imputa a los cargos y el interes se registra aparte. Repartir el monto
   //  completo abonaria con la mora cargos que no se pagaron.
+  //  Con descuento por pronto pago, el aviso trae ademas la mora que se
+  //  condono: se guarda junto al interes cobrado, aunque este sea $0.
   const interes = Number(datos.interes) > 0 ? Number(datos.interes) : 0;
+  const condonado = Number(datos.descuento) > 0 ? Number(datos.descuento) : 0;
   let porRepartir = datos.capital !== undefined && datos.capital !== null
     ? Number(datos.capital) : Number(datos.monto);
   if (!(porRepartir > 0)) return 'monto invalido';
-  if (interes > 0) {
+  if (interes > 0 || condonado > 0) {
     run(
-      `INSERT OR IGNORE INTO lease_interest_payments (lease_id, monto, pagado_en, referencia)
-       VALUES (?, ?, ?, ?)`,
-      [contrato.id, interes, (datos.pagado_en || '').slice(0, 10) || hoy(),
+      `INSERT OR IGNORE INTO lease_interest_payments (lease_id, monto, condonado, pagado_en, referencia)
+       VALUES (?, ?, ?, ?, ?)`,
+      [contrato.id, interes, condonado, (datos.pagado_en || '').slice(0, 10) || hoy(),
        `${datos.pago_id || evento.id}-interes`]
     );
   }

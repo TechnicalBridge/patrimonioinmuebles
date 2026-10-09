@@ -33,6 +33,11 @@ before(async () => {
   run(`INSERT INTO agency_connection (id, nombre, url, clave, url_avisos, secreto_eventos)
        VALUES (1, 'Agencia', 'http://agencia', 'ak_en_claro', 'http://patrimonio/api/eventos', 'whsec_en_claro')`);
 
+  //  En la version 4 ya se anotaban los intereses cobrados, sin lo condonado.
+  migrar(4);
+  run(`INSERT INTO lease_interest_payments (lease_id, monto, pagado_en, referencia)
+       VALUES (1, 4200, '2026-08-20', 'pg_2-interes')`);
+
   migrar();
 });
 
@@ -79,7 +84,11 @@ test('los contratos de antes no estan en disputa', () => {
 
 test('los contratos de antes no generan intereses, y hay donde anotar los que se cobren', () => {
   assert.equal(get("SELECT tasa_interes_mensual FROM leases WHERE codigo = 'CTR-1'").tasa_interes_mensual, null);
-  assert.equal(get('SELECT COUNT(*) AS n FROM lease_interest_payments').n, 0);
+});
+
+test('los intereses que ya se habian cobrado se conservan, sin nada condonado', () => {
+  const fila = get("SELECT monto, condonado, referencia FROM lease_interest_payments WHERE referencia = 'pg_2-interes'");
+  assert.deepEqual({ ...fila }, { monto: 4200, condonado: 0, referencia: 'pg_2-interes' });
 });
 
 test('migrar otra vez no hace nada', () => {
