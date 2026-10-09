@@ -264,6 +264,11 @@ interés, el aviso lo trae aparte del capital: los cargos bajan solo por el capi
 queda anotado en `lease_interest_payments`. En **Arriendos**, el contrato dice *2% mensual por
 mora* y cuánto interés cobró la cobranza.
 
+Si la cobranza ofrece un **descuento por pronto pago**, el aviso trae además cuánto de la mora se
+condonó (`descuento`). Se anota junto al interés cobrado de ese pago, aunque se haya condonado toda
+la mora y el cobrado sea $0, y el contrato muestra *$X de intereses condonados*. Así el contrato no
+parece haber cobrado menos de lo que se pactó, sin explicación.
+
 La tasa no puede superar el tope legal que fija la plataforma (hoy, 3% mensual): si lo supera, la
 cartera vuelve con ese contrato rechazado (`tasa_sobre_maxima`).
 
@@ -349,7 +354,7 @@ erDiagram
 | `leases` | El contrato, de un cliente. Su `codigo` (`CTR-2025-014`) es el identificador que viaja a la cobranza y permite que un aviso vuelva hasta acá. `tasa_interes_mensual` es el interés por mora pactado, si hay. `disputa_estado` (`abierta`, `rechazada` o `aceptada`), `disputa_motivo` y `disputa_desde` dicen en qué va un reclamo |
 | `charges` | Un cargo por mes. El `UNIQUE` impide cobrar dos veces el mismo período |
 | `charge_payments` | Los pagos, sumados aparte. **El saldo se calcula, no se guarda**, para que no haya dos números que puedan discrepar |
-| `lease_interest_payments` | El interés por mora que cobró la cobranza, por contrato. La `referencia` es única, así que un aviso repetido no lo anota dos veces |
+| `lease_interest_payments` | El interés por mora que cobró la cobranza, por contrato, y el que condonó por pronto pago (`condonado`). La `referencia` es única, así que un aviso repetido no lo anota dos veces |
 | `collection_batches` | Qué cartera se entregó a cobranza, cuándo, y qué respondió la agencia: `enviado`, `aceptado` o `parcial` |
 | `inbound_events` | Los avisos recibidos, para no procesar dos veces el mismo |
 | `users` · `sessions` | Los usuarios del panel, con su clave en scrypt, y sus sesiones: el hash del token, cuándo vence y si se cerró |
@@ -412,7 +417,7 @@ La agencia de cobranza no va en variables: se conecta en la pestaña **Cobranza*
 npm test
 ```
 
-**62 pruebas** con `node:test`, sobre bases temporales, así que no tocan `server/patrimonio.db`.
+**66 pruebas** con `node:test`, sobre bases temporales, así que no tocan `server/patrimonio.db`.
 
 | Qué cubre |
 | --- |
@@ -438,7 +443,7 @@ npm test
 
 | Verificación | Resultado |
 | --- | --- |
-| `npm test` | **62 pruebas**, sin fallos |
+| `npm test` | **66 pruebas**, sin fallos |
 | Build del cliente | Correcto |
 | Migración sobre la base del volumen | Pasó de la versión 3 a la 4 conservando sus 46 contratos |
 | Interés por mora, en vivo | Un contrato al 2% mensual con tres arriendos de $300.000 atrasados llegó por APOFYX a DataBridge, que cobró $918.800 con Khipu real: $900.000 de capital y $18.800 de interés. Los cargos quedaron en $0 y el contrato muestra *$18.800 de intereses cobrados* |

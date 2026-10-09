@@ -397,6 +397,12 @@ export default function ArriendosPanel() {
                       <span className="muted">{formatPrice(c.intereses_cobrados, c.moneda)} de intereses cobrados</span>
                     </>
                   ) : null}
+                  {c.intereses_condonados > 0 ? (
+                    <>
+                      <br />
+                      <span className="muted">{formatPrice(c.intereses_condonados, c.moneda)} de intereses condonados</span>
+                    </>
+                  ) : null}
                 </td>
                 <td>
                   {c.estado}

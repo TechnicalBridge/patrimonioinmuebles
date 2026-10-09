@@ -77,3 +77,48 @@ test('el panel muestra la tasa y lo que se cobro de intereses', async () => {
   assert.equal(contrato.intereses_cobrados, 6150);
   assert.equal(listarContratos().find((c) => c.codigo === 'CTR-2024-007').tasa_interes_mensual, 1.5);
 });
+
+test('con descuento por pronto pago, lo condonado queda junto a lo cobrado', async () => {
+  const { listarContratos } = await import('../arriendos.js');
+  const antes = deudaDe('CTR-2024-007');
+  procesarEvento({
+    id: 'evt_desc_1', tipo: 'pago.confirmado',
+    datos: { deuda_id_externo: 'CTR-2024-007', pago_id: '91', monto: antes + 9400, capital: antes, interes: 9400,
+             descuento: 9400, moneda: 'UF', pagado_en: '2026-10-08T10:00:00-03:00' },
+  });
+
+  assert.equal(deudaDe('CTR-2024-007'), 0, 'el capital salda los cargos');
+  const fila = get(`SELECT i.monto, i.condonado FROM lease_interest_payments i JOIN leases l ON l.id = i.lease_id
+                     WHERE l.codigo = 'CTR-2024-007'`);
+  assert.deepEqual({ ...fila }, { monto: 9400, condonado: 9400 });
+  const contrato = listarContratos().find((c) => c.codigo === 'CTR-2024-007');
+  assert.equal(contrato.intereses_cobrados, 9400);
+  assert.equal(contrato.intereses_condonados, 9400);
+});
+
+test('con toda la mora condonada, se guarda lo condonado aunque el interes cobrado sea $0', () => {
+  run("INSERT INTO properties (titulo, tipo, operacion, precio, estatus) VALUES ('Bodega 10', 'bodega', 'arriendo', 300000, 'arrendada')");
+  const propiedad = get("SELECT id FROM properties WHERE titulo = 'Bodega 10'").id;
+  const cliente = get('SELECT id FROM clients WHERE rut IS NOT NULL ORDER BY id LIMIT 1').id;
+  const contrato = crearContrato({ client_id: cliente, property_id: propiedad, renta_monto: 300000, fecha_inicio: '2026-07-01',
+                                   tasa_interes_mensual: '2' });
+  const debe = deudaDe(contrato.codigo);
+  assert.ok(debe > 0, 'el contrato ya tiene cargos vencidos');
+
+  const aviso = { id: 'evt_desc_2', tipo: 'pago.confirmado',
+    datos: { deuda_id_externo: contrato.codigo, pago_id: '92', monto: debe, capital: debe, interes: 0,
+             descuento: 18000, moneda: 'CLP', pagado_en: '2026-10-08T10:00:00-03:00' } };
+  procesarEvento(aviso);
+  procesarEvento({ ...aviso, id: 'evt_desc_2_otra_vez' });
+
+  const filas = all('SELECT monto, condonado FROM lease_interest_payments WHERE lease_id = ?', [contrato.id]);
+  assert.deepEqual(filas.map((f) => ({ ...f })), [{ monto: 0, condonado: 18000 }], 'una sola vez, aunque llegue dos');
+  assert.equal(deudaDe(contrato.codigo), 0);
+});
+
+test('una fila sin interes cobrado ni condonado no se puede guardar', () => {
+  const lease = get('SELECT id FROM leases ORDER BY id LIMIT 1').id;
+  assert.throws(() => run(`INSERT INTO lease_interest_payments (lease_id, monto, condonado, pagado_en, referencia)
+                            VALUES (?, 0, 0, '2026-10-08', 'vacia')`, [lease]), /CHECK/);
+});
+
